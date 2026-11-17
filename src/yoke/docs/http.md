@@ -1,265 +1,782 @@
-# HTTP harness API
+# HTTP API
 
-`yoke serve` starts one process-wide HTTP daemon for saved and active Yoke
-sessions and serves the packaged browser application from the same origin. The
-daemon owns the session runtime registry, queue admission, execution workers,
-event feed, process inspector, tool inspector, and the shared services used by
-the CLI. Interactive and headless CLI clients attach to the per-user daemon over HTTP.
+This guide is for developers who drive Yoke from another program over HTTP. It
+explains how the per-user daemon, sessions, turns and events work, then walks
+through the common tasks with real requests. The
+[HTTP API reference](http-reference.md) lists every endpoint with its fields
+and error codes. [Writing a daemon client](daemon-client.md) covers what a
+long-lived client such as a terminal or editor adds on top: discovery,
+attachments, per-client environments and version skew.
 
-`yoke serve --session-dir PATH` (or `YOKE_HTTP_SESSION_DIR`) selects an explicit
-session store for a dedicated daemon. `--hide-token` suppresses the startup
-bearer-token line when a service manager supplies `YOKE_HTTP_TOKEN` through a
-protected environment file. These options let integrations run a distinct
-process-wide Yoke runtime without a wrapper daemon. `yoke acp` can then expose
-that daemon over stdio ACP while this HTTP service remains the authority for
-session state and physical worker drain.
+All paths below have the `/api/v1` prefix. Field names are camelCase.
 
 ## Per-user daemon
 
-`yoke serve --daemon` runs one daemon per user. The exclusive lifetime OS lock on
-`~/.yoke/daemon.lock` is taken before binding. A losing startup racer exits 0.
-After a crash, the next lock holder replaces the stale socket and discovery
-record without trusting a pid from disk.
+Each user runs one daemon, `yoke serve --daemon`. The CLI and `yoke acp` start
+it on demand, so you rarely start it yourself. The daemon owns every saved
+session, runs all turns, and serves the browser UI on its TCP port. To open the
+UI, visit `http://127.0.0.1:<port>/#token=<token>` with the values from
+`daemon.json`. Sessions live in one SQLite
+database, `~/.yoke/yoke.db` by default.
 
-On Linux and macOS, the local listener is `$XDG_RUNTIME_DIR/yoke/daemon.sock`, falling back to
-`~/.yoke/run/daemon.sock` when the runtime directory is unset or its socket path
-exceeds the Unix socket length limit. If the home fallback is also too long,
-startup reports the path error; set a shorter `XDG_RUNTIME_DIR`. Daemon state and
-run directories are set to mode 0700, including existing directories.
-The socket accepts only the kernel-reported peer uid of the daemon user
-(`SO_PEERCRED` on Linux, `getpeereid` on macOS), with no bearer token. The browser listener is
-`127.0.0.1:8770`, authenticated with a bearer token. If the port is occupied,
-the daemon logs a warning and falls back to an ephemeral loopback port.
-`yoke daemon status` reports the selected URL. Explicit `--port` or
-`YOKE_DAEMON_PORT` settings are strict, including an explicit 8770; an occupied
-explicit port fails startup. Zero requests an ephemeral port. `~/.yoke/daemon.json`,
-mode 0600 on Unix, records pid, build id, protocol version, socket, selected port
-and token. Detached logs go to `~/.yoke/run/daemon.log`, rotating at 2 MiB with two
-backups throughout the daemon's lifetime. Windows opens inherited log handles
-with delete sharing so they permit rotation. Windows opens inherited stdio log
-handles with delete sharing so rotation can rename those files.
+The daemon listens in two places:
 
-`yoke.daemon.client.connect_or_spawn()` discovers or starts a detached daemon
-in its own process session, then polls for up to five seconds. CLI and ACP use this
-helper by default. Windows detaches with `DETACHED_PROCESS` and
-`CREATE_NEW_PROCESS_GROUP`, without a POSIX session.
-No live systemd service is migrated automatically. A sample user unit is in
+| Listener | Platform | Authentication |
+| --- | --- | --- |
+| Unix socket `$XDG_RUNTIME_DIR/yoke/daemon.sock` | Linux, macOS | The kernel-reported peer uid must match the daemon's user. No token. |
+| TCP `127.0.0.1:8770` | All | Bearer token from `~/.yoke/daemon.json`. |
+
+If `XDG_RUNTIME_DIR` is unset, or the socket path would exceed the Unix limit of
+107 bytes, the socket moves to `~/.yoke/run/daemon.sock`. If that path is also
+too long, startup fails and you need a shorter `XDG_RUNTIME_DIR`. Windows has no
+socket and uses TCP only.
+
+If port 8770 is taken, the daemon logs a warning and binds an ephemeral loopback
+port instead. An explicit `--port` or `YOKE_DAEMON_PORT` is strict. If that port
+is taken, startup fails. Port `0` asks for an ephemeral port. Always read the
+port from `daemon.json` rather than assuming 8770.
+
+The daemon writes `~/.yoke/daemon.json` with mode 0600 after it binds its
+listeners:
+
+```json
+{
+  "pid": 41237,
+  "build_id": "3.34.1+g8bc4e1d31613",
+  "protocol_version": "1",
+  "socket": "/run/user/1000/yoke/daemon.sock",
+  "port": 8770,
+  "token": "<bearer token>",
+  "idle_exit": true,
+  "started_at": 1795435602.5
+}
+```
+
+The token is new on every start unless `YOKE_HTTP_TOKEN` is set in the daemon's
+own environment. A daemon spawned by the CLI never inherits that variable. Do
+not copy the token into logs or share it. Anyone holding it can read workspace
+files, run commands and spend your provider credits.
+
+The daemon takes an exclusive lock on `~/.yoke/daemon.lock` before it binds
+anything. A second daemon that loses the race exits with status 0. After a
+crash, the next daemon to take the lock replaces the stale socket and
+`daemon.json`. The daemon sets `~/.yoke` and its run directory to mode 0700,
+including directories that already exist. A detached daemon logs to `~/.yoke/run/daemon.log`, which rotates at
+2 MiB and keeps two backups.
+
+### Idle exit and leases
+
+A lease is an open stream that keeps the daemon alive. `GET /event?client=<name>`
+and `GET /daemon/lease?client=<name>` both hold one. The daemon exits about five
+seconds after it has no leases and no work. Work means a running, stopping or
+input-waiting turn, a worker still finishing a retired turn, or an unpaused
+queued input in any session. Paused inputs do not keep the daemon alive.
+`--no-idle-exit` turns idle exit off, for a daemon run by a service manager.
+A sample systemd user unit is in
 [`docs/yoke-daemon.service`](../../../docs/yoke-daemon.service).
 
-On Windows, CLI and ACP clients use the loopback TCP port and bearer token
-from `daemon.json`. There is no Unix socket or `XDG_RUNTIME_DIR` requirement.
-The daemon holds an exclusive `msvcrt.locking` byte lock for its lifetime;
-Normal shutdown explicitly unlocks before closing; Windows also releases the
-lock on process exit, including a crash. Default-port fallback works on Windows
-too. An occupied explicit TCP port fails startup. No in-process fallback exists
-on any platform.
+When the daemon exits, it closes event streams, waits for workers, terminates
+background processes started by tools, and removes the socket and
+`daemon.json` before it releases the lock.
 
-Before publishing the token, Windows startup replaces the state and run
-directories' DACLs with protected ACLs granting full control only to the current
-process user's SID. Child files inherit that access. The temporary discovery
-record also receives a protected user-only DACL before its atomic replacement
-of `daemon.json`. A filesystem that cannot enforce these ACLs causes startup to
-fail. Use a local user profile on an ACL-capable filesystem such as NTFS.
-Windows administrators can still take ownership using their administrative
-privileges, as root can on Unix. Never share the token or copy it into logs.
+### Windows
 
-Stop and restart use authenticated HTTP controls on every platform. The daemon
-closes event streams, drains workers and releases its lock after removing its
-discovery record. Windows does not need Unix signals or signal-zero PID probes
-for daemon liveness or normal shutdown.
+On Windows the daemon listens on loopback TCP only, and every client sends the
+bearer token from `daemon.json`. Before writing the token, the daemon replaces
+the access control lists of `~/.yoke` and its run directory with protected
+lists that grant access only to the current user. `daemon.json` gets the same
+protection before it is moved into place. If the filesystem cannot enforce
+these lists, startup fails. Use a local profile on NTFS. An administrator can
+still take ownership of the files, as root can on Unix.
 
-A lease is an authenticated open event stream that identifies the client.
-`GET /api/v1/event?client=web` makes the normal feed a lease. Alternatively,
-`GET /api/v1/daemon/lease?client=acp&pid=123` emits `daemon.lease`, heartbeats,
-and `daemon.exiting`. Disconnect releases the lease. Browser tabs and local
-ACP processes identify themselves this way. With no leases and no running,
-retired-but-draining, or queued turns, the daemon exits after about five seconds.
-Queued inputs keep it alive even when paused. `--no-idle-exit` disables idle
-exit for systemd. Tool background processes are closed during daemon shutdown.
+The lifetime lock is a `msvcrt.locking` byte lock that Windows releases when
+the process exits, including after a crash. Stop and restart use the same HTTP
+controls as on Unix. The daemon does not depend on Unix signals.
 
-`GET /api/v1/health` includes `buildID` as version, git HEAD and dirty flag,
-plus `protocolVersion`. The daemon eagerly imports the packaged runtime before
-accepting clients, keeping a later checkout update out of its loaded code.
-Workspace tools and provider plugins still share the daemon's Python process
-and environment; a daemon crash affects every attached client's turns.
+### Standalone server
 
-Authenticated daemon controls are:
-
-- `GET /api/v1/daemon`: pid, build, listeners, leases, busy and restart status.
-- `POST /api/v1/daemon/restart` with optional `{"whenIdle":true}`: refuse busy
-  restarts with 409, or schedule exit after work drains. Clients rediscover and
-  spawn the replacement; systemd restarts an always-on daemon.
-- `POST /api/v1/daemon/stop` with optional `{"force":true}`: refuse busy stops
-  with 409 unless explicitly forced. A stop ends local ACP's lease reconnect
-  loop. A normal stop rechecks work before exiting and lets a racing admission
-  drain; force stops immediately. Starting another client can start a fresh daemon.
-
-The CLI equivalents are `yoke daemon status`, `restart [--when-idle]`, and
-`stop [--force]`. Status exits 1 when none answers. Restart starts a daemon if
-none exists. Build mismatch while idle requests a restart and reattaches.
-While busy, compatible clients attach with one warning and schedule an idle
-restart; incompatible clients refuse. Another client's turn is never interrupted
-by skew handling. Provider credentials resolve from the admitting client's environment and saved
-credentials. See [the daemon client contract](daemon-client.md) for attachment,
-startup reports, session-filtered SSE, renderer events and environment isolation.
-
-ACP reports native HTTP failures with the failure category, operation, and
-elapsed time, for example `Native HTTP read timeout during POST session/wait
-after 35.0s`. These errors describe the local ACP-to-daemon request, not the
-model provider connection. Session IDs, query values, credentials, response
-bodies, and raw exception text are omitted. Failed requests are not retried
-automatically, since a prompt may already have been admitted. A failed turn
-still interrupts admitted work and waits for worker drain. The ACP client
-expires idle pooled connections after 2 seconds, before the daemon's 5-second
-keep-alive timeout, so it never reuses a connection the server is closing.
-
-The public API is versioned under `/api/v1`. Its OpenAPI document is available
-at `/api/v1/openapi.json`. The checked-in contract used by tests is
-`tests/yoke/http/golden/openapi.json`; regenerate it with:
+`yoke serve` without `--daemon` runs a separate HTTP server that is not the
+per-user daemon. It listens on `127.0.0.1:8765` by default, prints its URL and
+bearer token at startup, and does not write `daemon.json` or exit when idle.
+Use it for a dedicated session store (`--session-dir` or
+`YOKE_HTTP_SESSION_DIR`), a stable token (`--token` or `YOKE_HTTP_TOKEN`), or a
+network listener:
 
 ```bash
-uv run python scripts/generate_http_openapi.py
+yoke serve --host "$(tailscale ip -4)" --allow-remote
 ```
 
-`clients/typescript` contains a small `openapi-fetch` client whose `paths`
-types are generated from that checked-in contract. After changing the HTTP
-API, run `npm run generate` in `clients/typescript` and commit the generated
-`src/schema.d.ts` alongside the OpenAPI golden file. Validate contract drift
-and compile the client with:
+A non-loopback `--host` requires `--allow-remote`. The bearer token is still
+required, and your firewall or Tailscale ACLs decide who can reach the port.
+Never expose the server to an untrusted network. `--open` opens the browser UI
+with the token in the URL fragment, which browsers do not send to the server.
+`--hide-token` suppresses the token line when a service manager supplies
+`YOKE_HTTP_TOKEN`. `--verbose` turns on Uvicorn access logs.
+
+The `/daemon` endpoints return `404 daemon_mode_required` on a standalone
+server. Everything else in this guide works the same way.
+
+### Authentication
+
+Requests on the Unix socket need no credentials. Requests over TCP need this
+header:
+
+```text
+Authorization: Bearer <token>
+```
+
+`GET /health`, `GET /openapi.json` and the browser application routes are
+public. Every other `/api/v1` route returns 401 without a valid token:
+
+```json
+{
+  "error": {
+    "code": "unauthorized",
+    "message": "Invalid or missing bearer token.",
+    "details": {},
+    "requestID": "req_b7df5915851d45968fc2586995011b6e"
+  }
+}
+```
+
+The 401 response also carries `WWW-Authenticate: Bearer`.
+
+## Sessions
+
+A session is a saved conversation tree bound to a working directory. Its ID is
+a string such as `20261117-120642-1d2dae`, chosen by the daemon unless you pass
+one. A session does not depend on any HTTP connection. Listing sessions reads
+summary rows from SQLite and does not load conversation history or construct
+providers. The daemon loads a session's runtime only when an operation needs it.
+
+`location.directory` is the saved working directory. `workspace` reports what
+the daemon finds on disk now: `available`, `missing`, `not_directory`,
+`unreadable`, `unconfigured` or `invalid`. A session whose directory is gone
+can still be read, renamed, pinned and archived, and its queued inputs can be
+listed and removed, but it cannot run turns, change model or compact until you restore or relocate the
+directory. See [Recover a moved workspace](#recover-a-moved-workspace).
+
+The web UI calls archiving "Settle". The API field is `archived`. Archiving
+only affects listing, and sending a prompt to an archived session unarchives it
+in the same request.
+
+## Turns and input admission
+
+Every prompt becomes an input with an ID. `POST /session/{id}/prompt` admits
+the input. The daemon writes it, its `session.prompt.admitted` event and the
+queue change in one SQLite transaction, then returns a receipt. Only after that
+commit does the input become eligible to run. Admission and execution are
+separate steps, so a successful response means the input is saved, not that the
+model has answered.
+
+Each session runs one turn at a time. The daemon picks the next input in this
+order:
+
+1. Unpaused inputs with `delivery: "steer"`, oldest first.
+2. Unpaused inputs with `delivery: "queue"`, oldest first.
+
+Paused inputs never start. When a turn finishes, the daemon starts the next
+eligible input without waiting for a request.
+
+The two delivery modes differ when a turn is already running:
+
+| Delivery | Behaviour while a turn runs |
+| --- | --- |
+| `steer` (default) | The daemon interrupts the running turn, saves it as interrupted, and starts the steering input. |
+| `queue` | The input waits until the running turn finishes. |
+
+`resume` defaults to `true` and tells the daemon to look for work right after
+admission. With `resume: false` the input is saved but nothing starts now. It
+still runs when the current turn finishes, or on the next request that resumes.
+Pause an input if you want to hold it.
+
+`POST /session/{id}/interrupt` stops the running turn. The daemon saves the
+partial turn with an interrupted marker and settles the input with outcome
+`stopped`. Interrupting does not start the next queued input. Queued inputs
+wait until the next admission or queue edit with `resume: true`.
+
+Closing an HTTP request or an event stream never cancels admitted work.
+
+The daemon runs at most 50 sessions at once. A turn beyond that limit waits in
+FIFO order. Its state stays `running` and its `activity` reads
+`Waiting for a slot`. You can interrupt a waiting turn.
+
+## Events
+
+The daemon publishes two kinds of events:
+
+- Durable events record state changes such as admission, promotion,
+  settlement, interruption, queue edits and saved messages. The daemon writes
+  each one to a per-session journal with a sequence number `durable.seq`,
+  and publishes it on the live stream only after the write commits.
+- Live events carry progress that is not saved: model start and end, tool
+  starts, tool output deltas, provider retries, activity changes, permission
+  requests and plan updates. They have `durable: null`.
+
+`GET /event` is a Server-Sent Events stream. Each frame looks like this:
+
+```text
+id: evt_89abf37676b1bc673365a7a5
+event: session.prompt.admitted
+data: {"id":"evt_89abf37676b1bc673365a7a5","type":"session.prompt.admitted","time":"2026-11-17T12:06:42.623292+00:00","sessionID":"20261117-120642-1d2dae","location":{"directory":"/home/me/project"},"durable":{"aggregateID":"20261117-120642-1d2dae","seq":2,"version":1},"data":{"inputID":"inp_docs_001","clientID":null,"delivery":"queue","prompt":{"text":"Run the test suite and fix failures.","attachments":[],"continuation":false}}}
+```
+
+The first frame is always `server.connected`. The daemon sends a `: heartbeat`
+comment after 20 seconds without events. Without `sessionID` the stream carries
+every session's events. With `sessionID` it carries only that session's events
+plus the global `server.resyncRequired` and `server.stopping` notices, and the
+daemon filters before queueing, so a busy unrelated session cannot overflow
+your stream.
+
+Each stream has a queue of 512 events. Delivery follows these rules:
+
+- If the queue is full, the daemon drops new live events for that stream
+  without telling you.
+- If a durable event does not fit, the daemon empties the queue, sends
+  `server.resyncRequired` with `{"reason":"slow_consumer"}`, and closes the
+  stream.
+- The stream does not replay missed events on reconnect. `Last-Event-ID` is
+  ignored. Use `/history` instead.
+
+Durable sequence numbers increase per session but can have gaps. To catch up
+after connecting or after `server.resyncRequired`, follow
+[Stream events and recover after a disconnect](#stream-events-and-recover-after-a-disconnect).
+
+## Errors
+
+Every error uses the same envelope. `requestID` matches the `X-Request-ID`
+response header. If you send an `X-Request-ID` header, the daemon uses your
+value.
+
+```json
+{
+  "error": {
+    "code": "input_identity_conflict",
+    "message": "Input id was already used with different admission data.",
+    "details": {"inputID": "inp_docs_001"},
+    "requestID": "req_5b51f0c7ce464743af4245f0f1effa20"
+  }
+}
+```
+
+Request validation failures return 422 with code `validation_error` and
+`details.errors`, a list of `{loc, type, msg}`. While the daemon shuts down,
+every request returns `503 daemon_exiting`. Reconnect and retry after
+rediscovering the daemon. The [reference](http-reference.md#error-codes) lists
+every code.
+
+## Connect to the daemon
+
+On Linux and macOS, use the socket. The host part of the URL is ignored.
 
 ```bash
-cd clients/typescript
-npm ci
-npm run check
+SOCK="${XDG_RUNTIME_DIR:-$HOME/.yoke/run}/yoke/daemon.sock"
+curl --unix-socket "$SOCK" http://yoke/api/v1/health
 ```
 
-The `HTTP contract` GitHub Actions workflow runs the full Python suite, including
-the contract tests, plus TypeScript generation/typechecking and browser
-regressions on pushes to `main` and pull requests. Run the browser tests locally
-from the repository root with:
+Over TCP, read the port and token from `daemon.json`:
 
 ```bash
-node --experimental-default-type=module scripts/test_web_optimistic_updates.mjs
-node --experimental-default-type=module scripts/test_web_agent_runs.mjs
-node --experimental-default-type=module scripts/test_web_workspace_recovery.mjs
-node --experimental-default-type=module scripts/test_web_workspace_races.mjs
-node --experimental-default-type=module scripts/test_web_location_picker.mjs
-node --experimental-default-type=module scripts/test_web_markdown_math.mjs
+PORT=$(jq -r .port ~/.yoke/daemon.json)
+TOKEN=$(jq -r .token ~/.yoke/daemon.json)
+curl -H "Authorization: Bearer $TOKEN" "http://127.0.0.1:$PORT/api/v1/health"
 ```
 
-`scripts/test_web_location_picker_browser.py` drives the working location
-palette, and `scripts/test_web_type_to_focus_browser.py` drives composer
-type-to-focus, both in Chrome against in-browser fixtures. Run them with
-`uv run python scripts/<name>.py`.
-`scripts/test_web_composer_popover_browser.py` verifies completion menus open
-above both the saved-session and new-session composers.
-`scripts/test_web_markdown_math_browser.py` covers sanitized assistant Markdown,
-inline and display math, code blocks, and the bundled KaTeX fonts with the same
-fixture approach.
-
-## Workspace status and recovery
-
-Session identity and saved history do not depend on whether the working
-directory still exists. `SessionInfo.workspace` reports the current filesystem
-state as `{status, message}`. The status is `available`, `missing`,
-`not_directory`, `unreadable`, `unconfigured`, or `invalid`. It is live status,
-not a persisted replacement for `location.directory`.
-
-An existing session without a saved root is `unconfigured` and requires explicit
-relocation. There is no legacy fallback to the invocation directory. Fresh
-sessions still use the invocation working directory when no root is supplied.
-
-When a saved workspace is unavailable, transcript, tree and saved context reads
-remain usable. Rename, pin, archive, queue inspection and queue removal also
-remain available, subject to their usual busy-work restrictions. Execution,
-model selection, compaction and root-dependent catalogs reject the unavailable
-workspace. Yoke never creates the missing directory or silently uses the daemon's
-working directory instead. Runtime status includes `lastError` so clients can
-inspect a failure that happened after admission. Workspace validation runs at
-admission and again before execution. Filesystem deletion does not by itself
-consume pending queue work or change prompt idempotency semantics.
-
-An input rejected after admission is returned to the queue paused with the same
-ID and attachments. Recovery records its intent before writing the queue, so a
-failed write can be reconciled on the next queue read or operation. Orphaned
-promoted inputs are recovered only after acquiring exclusive workspace access,
-never while a live worker or a worker waiting for execution capacity owns them.
-Remove or explicitly unpause recovered inputs instead of silently retargeting
-them to a different directory.
-
-To recover the same session, restore its original directory or explicitly send:
-
-```http
-POST /api/v1/session/my-session/relocate
-Content-Type: application/json
-
-{"directory":"/new/project","expectedDirectory":"/old/project"}
+```json
+{
+  "data": {
+    "healthy": true,
+    "version": "3.34.1",
+    "protocolVersion": "1",
+    "buildID": "3.34.1+g8bc4e1d31613"
+  }
+}
 ```
 
-The response is the usual `SessionResponse`, with the same session ID and updated
-location and workspace status. The destination must already exist and be a
-readable directory. Relocation changes session metadata, not project files.
-`expectedDirectory` is optional optimistic concurrency protection. Supply the
-directory you last read to reject a move after another client changed it.
-Relocating to the current valid directory is an idempotent no-op.
+If nothing answers, start the daemon with `yoke serve --daemon` or run any
+`yoke` command that needs it. `yoke daemon status` prints the pid, build,
+socket, port, leases and whether it is busy. The remaining examples use the TCP
+form and assume `$BASE` is `http://127.0.0.1:$PORT/api/v1`.
 
-Relocation rejects active turns, operations, live child processes and pending
-queue items, including paused items. Stop live work and remove queued work
-before trying again. An exclusive nonblocking workspace lease also prevents
-relocation while another CLI or HTTP process uses the session. The daemon retires
-root-bound runtime resources on relocation and rebuilds them for the new root.
+## Create a session
 
-On Windows, nested readers in one process share a reference-counted native lock.
-Different processes conservatively serialize access to the same session while
-that lock is held. POSIX readers can share across processes. Both arrangements
-exclude relocation until the last execution or background-process owner releases
-its lease. Session-scoped MCP inspection holds the same lease through live MCP
-manager cleanup, so relocation cannot replace its workspace while inspection is
-using workspace-local server configuration.
+```bash
+curl -X POST "$BASE/session" -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"location":{"directory":"/home/me/project"},"title":"Fix the flaky test"}'
+```
 
-Relocation preserves saved branches, messages, compaction handoffs and cached
-activated-skill instructions. A fresh runtime rediscovers configuration, tools,
-available skills and MCP in the destination workspace. It does not rewrite
-historical provider-visible instructions to match files in the new directory.
+```json
+{
+  "data": {
+    "id": "20261117-120642-1d2dae",
+    "title": "Fix the flaky test",
+    "pinned": false,
+    "archivedAt": null,
+    "location": {"directory": "/home/me/project"},
+    "workspace": {"status": "available", "message": null},
+    "time": {
+      "created": "2026-11-17T12:06:42.553963+00:00",
+      "updated": "2026-11-17T12:06:42.553963+00:00",
+      "lastUserMessage": null
+    },
+    "selection": {"provider": null, "model": null, "reasoningEffort": null},
+    "contextUsage": null,
+    "databasePath": "/home/me/.yoke/yoke.db",
+    "contextWindowTokens": null,
+    "tree": {"leafID": null, "entryCount": 0},
+    "queue": {"total": 0, "steering": 0, "queued": 0, "paused": 0, "revision": 0}
+  },
+  "startup": null
+}
+```
 
-`POST /api/v1/session/{id}/fork` accepts optional `location: {directory}` alongside
-its existing fields. An explicit valid target supports forking even when the
-source workspace is unavailable. Omitting `location` inherits the source root,
-which must be available. Validation fails before creating a fork if that root
-is unavailable. A fork gets a new ID and never relocates or deletes the source.
+`location.directory` must be an existing readable directory. If it is not, the
+daemon returns `400 workspace_unavailable`. A session with no `selection` uses
+the provider and model that the CLI would pick for that directory: project
+settings, then user settings, then provider defaults.
 
-Workspace errors use the normal JSON error envelope:
+Creating a session is idempotent when you supply `id`. Repeating the request
+with the same `id` and directory returns the existing session. The same `id`
+with a different directory returns `409 session_identity_conflict`.
 
-| HTTP status | `error.code` | Meaning |
-| --- | --- | --- |
-| 409 | `session_workspace_unavailable` | A saved workspace cannot be used. Details include `sessionID`, `directory` and workspace `status`. |
-| 400 | `workspace_unavailable` | A newly supplied directory is invalid or unavailable. |
-| 409 | `session_workspace_busy` | Relocation cannot acquire exclusive access, or the session has live or pending work. |
-| 409 | `session_workspace_conflict` | The saved directory no longer matches `expectedDirectory`. Read it again before deciding whether to move it. |
+Set `startup: true` to run the CLI's startup checks. The response then has a
+`startup` object with `warnings`, `activeSkills`, `modelSource` and
+`toolReport`. Passing `skills` also runs startup and activates those skills.
+A startup failure returns `400 session_startup_failed` and leaves the empty
+session in place, so you can correct the request and retry with the same `id`.
+To create a session already attached to your client, include a `client` block.
+[Writing a daemon client](daemon-client.md#attach-a-client) describes it.
 
-The browser keeps the timeline and editable draft visible when the workspace is
-unavailable. Its notice offers **Retry workspace** after restoring the original
-directory, or **Relocate workspace** to open the working location palette.
-Choose a folder, then confirm **Relocate this session**. Selecting a folder alone
-does not move the session. Execution, model and compaction controls stay disabled
-until the workspace is available. Queue removal remains accessible. A typed
-`session_workspace_unavailable` response after live deletion shows the same
-notice; rejected prompts restore their text and image attachments.
+## Send a prompt idempotently
 
-After a successful relocation, the browser clears root-dependent caches and
-refreshes tools, skills, MCP, models, providers and location metadata. Old
-in-flight catalog responses cannot restore the previous directory's data.
-Connected tabs handle `session.workspace.relocated` by invalidating outstanding
-directory requests and refreshing the session summary, lists and catalogs.
-Delayed rename or pin responses and failed-edit rollbacks keep the current
-workspace binding and request a fresh summary. The transcript and draft remain
-intact in both the initiating tab and other connected tabs.
-A catalog refresh failure does not turn a successful relocation or a readable
-transcript into a session-load failure. Reopen the relevant inspector or model
-picker to retry it.
+Generate the input ID yourself and keep it until you know the outcome:
 
-The TypeScript client preserves its typed `GET` and `POST` methods and adds
-convenience methods using the same authentication and error handling:
+```bash
+curl -X POST "$BASE/session/$SID/prompt" -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"id":"inp_docs_001","prompt":{"text":"Run the test suite and fix failures."},"delivery":"queue"}'
+```
+
+```json
+{
+  "data": {
+    "id": "inp_docs_001",
+    "sessionID": "20261117-120642-1d2dae",
+    "prompt": {
+      "text": "Run the test suite and fix failures.",
+      "attachments": [],
+      "continuation": false
+    },
+    "delivery": "queue",
+    "state": "admitted",
+    "admittedSeq": 2,
+    "promotedSeq": null,
+    "timeCreated": "2026-11-17T12:06:42.623534+00:00"
+  }
+}
+```
+
+If the request times out or the connection drops, send exactly the same request
+again. The daemon compares the session, prompt text, attachments,
+`continuation` flag and `delivery` with the saved input:
+
+- If they match, it returns the original receipt and admits nothing new.
+- If they differ, it returns `409 input_identity_conflict`.
+
+`resume` and `clientID` are not part of that comparison. Without an `id`, the
+daemon generates one, and a retry admits the prompt twice. Yoke's own clients
+never retry an ambiguous write with a new ID.
+
+Prompt text is limited to 1 MiB (`413 prompt_too_large`). Empty text without
+attachments returns `400 empty_prompt`.
+
+To ask the model to continue from the saved conversation without adding a user
+message, send `{"prompt":{"continuation":true}}` with empty text and no
+attachments. The session must already contain a user message
+(`400 empty_continuation`), and continuation input with text or attachments
+returns `400 invalid_continuation`. The flag is part of the idempotency
+comparison.
+
+## Wait for the answer
+
+`POST /session/{id}/wait?timeoutMs=60000` blocks until the session has no
+running turn or operation, then returns its runtime state:
+
+```json
+{
+  "data": {
+    "state": "idle",
+    "turnID": null,
+    "startedAt": null,
+    "activity": null,
+    "lastError": null
+  }
+}
+```
+
+`timeoutMs` accepts 1 to 300,000. If the timeout passes first, the response is
+still 200 and reports the current state, for example `running`. Omit
+`timeoutMs` to wait without a limit. `state` is one of `idle`, `running`,
+`stopping`, `waiting_input` or `error`. `error` means the last turn failed, and
+`lastError` holds its message.
+
+Wait observes the session, not one input. If other inputs are queued behind
+yours, the session stays busy until they finish too. To follow a single input,
+watch its events: `session.prompt.promoted` when it starts and
+`session.prompt.settled` when it ends, with `outcome` set to `completed`,
+`stopped`, `failed` or `recovered`.
+
+Read the answer from the transcript. `GET /session/{id}/message` returns the
+active branch newest first. Assistant messages carry the `inputID` of the turn
+that produced them, and the final reply has `phase: "final_answer"`:
+
+```json
+{
+  "data": [
+    {
+      "type": "assistant",
+      "id": "3f9c2a7d10b84e6c",
+      "kind": "assistant",
+      "inputID": "inp_docs_001",
+      "phase": "final_answer",
+      "content": [{"type": "text", "text": "All 214 tests pass now."}],
+      "toolCalls": [],
+      "timeCreated": "2026-11-17T12:09:10.120000+00:00",
+      "turnSummary": {"durationSeconds": 148.2, "toolCount": 9}
+    }
+  ],
+  "cursor": {"previous": null, "next": "<opaque>"},
+  "snapshotSeq": 31
+}
+```
+
+`turnSummary` appears on the last entry of turns that ran for at least one
+minute. `snapshotSeq` is the newest durable event sequence included in this
+read. Pass it as `after` to `/history` to receive only later changes.
+
+## Stream events and recover after a disconnect
+
+```bash
+curl -N -H "Authorization: Bearer $TOKEN" \
+  "$BASE/event?sessionID=$SID&client=my-tool"
+```
+
+`client` names your stream and makes it a daemon lease, so the daemon does not
+idle out while you watch. Omit it if you do not want to keep the daemon alive.
+An unknown `sessionID` returns 404.
+
+A client that wants a complete view does this on every connect, and again
+after `server.resyncRequired`:
+
+1. Open `GET /event` first, so you do not miss events published while you
+   catch up. Buffer what arrives.
+2. Read current state: `GET /session/active` for running sessions, then
+   `GET /session/{id}`, `/queue` and `/message` for the sessions you show.
+3. Page through `GET /session/{id}/history?after=<last seq>&limit=200` until
+   `hasMore` is false. `after` is exclusive.
+4. Apply the buffered stream events, skipping durable events whose `seq` you
+   have already applied.
+
+Live events missed during a disconnect are gone. The next durable event or a
+REST read gives you the settled state.
+
+Agent progress events keep their payload keys in snake_case, and each carries
+`turnID` and `inputID`. [Writing a daemon client](daemon-client.md#event-names)
+maps each event name to its payload.
+
+## Interrupt, steer and edit the queue
+
+Interrupt the running turn:
+
+```bash
+curl -X POST "$BASE/session/$SID/interrupt" -H "Authorization: Bearer $TOKEN"
+```
+
+```json
+{"data": {"interrupted": true, "turnID": 7}}
+```
+
+When nothing is running the response is `{"interrupted": false, "turnID": null}`.
+Interrupt returns once the daemon has saved the interrupted turn. The worker
+thread may still be cleaning up. If you need it to be gone, for example before
+changing the session's client configuration from another process, call drain:
+
+```bash
+curl -X POST "$BASE/session/$SID/drain?timeoutMs=30000" -H "Authorization: Bearer $TOKEN"
+```
+
+```json
+{"data": {"drained": true, "activeWorkers": 0}}
+```
+
+Drain counts workers still running, including those of retired turns and those
+waiting for an execution slot. Queued inputs that have not started are not
+workers, and drain does not start them. On timeout the response is 200 with
+`drained: false` and the remaining count. `timeoutMs` defaults to 30,000 and
+accepts 1 to 300,000. Cancelling the drain request cancels nothing. Drain
+reports a moment in time. New work can start right after it returns.
+
+To redirect a running turn, admit a new input with `delivery: "steer"`. The
+daemon interrupts the turn and starts the steering input.
+
+Pending inputs stay editable until they start. Read the queue to get its
+revision:
+
+```bash
+curl "$BASE/session/$SID/queue" -H "Authorization: Bearer $TOKEN"
+```
+
+```json
+{
+  "data": {
+    "revision": 1,
+    "pendingImages": [],
+    "items": [
+      {
+        "id": "inp_docs_001",
+        "prompt": {"text": "Run the test suite and fix failures.", "attachments": [], "continuation": false},
+        "delivery": "queue",
+        "paused": false,
+        "createdAt": "2026-11-17T12:06:42.623534+00:00",
+        "state": "admitted"
+      }
+    ]
+  }
+}
+```
+
+Then send a patch with that revision and a list of operations:
+
+```bash
+curl -X PATCH "$BASE/session/$SID/queue" -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"expectedRevision":1,"operations":[{"op":"setPaused","id":"inp_docs_001","paused":true}]}'
+```
+
+The daemon applies all operations or none. If the queue changed since your
+revision, it applies nothing and returns:
+
+```json
+{
+  "error": {
+    "code": "queue_revision_conflict",
+    "message": "Queue changed since revision 1.",
+    "details": {"expectedRevision": 1, "actualRevision": 2},
+    "requestID": "req_34c0aba7ed9a4b0ab0e34b36d92b10ef"
+  }
+}
+```
+
+Reread the queue and decide again. The operations are `update`,
+`setDelivery`, `setPaused`, `remove`, `moveBefore`, `moveAfter` and
+`moveToStart`. A patch can also admit new inputs through `admissions`, using
+the same request shape and idempotency rules as `/prompt`, so you can install
+new inputs and edits atomically. `resume` works as it does on `/prompt`.
+
+## Upload images and files
+
+Upload each attachment, then reference its URI in the prompt:
+
+```bash
+curl -X POST "$BASE/upload?sessionID=$SID" -H "Authorization: Bearer $TOKEN" \
+  -F "file=@screenshot.png;type=image/png"
+```
+
+```json
+{
+  "data": {
+    "id": "upl_4955cf45a1099bc840a06c78",
+    "uri": "yoke-upload://upl_4955cf45a1099bc840a06c78",
+    "name": "screenshot.png",
+    "mime": "image/png",
+    "size": 48211,
+    "expiresAt": "2026-11-18T12:06:42.582100+00:00"
+  }
+}
+```
+
+```json
+{
+  "id": "inp_docs_002",
+  "prompt": {
+    "text": "Why is the sidebar clipped?",
+    "attachments": [
+      {"type": "file", "uri": "yoke-upload://upl_4955cf45a1099bc840a06c78", "name": "screenshot.png", "mime": "image/png"}
+    ]
+  }
+}
+```
+
+The rules:
+
+- Each upload is at most 20 MiB (`413 attachment_too_large`). A prompt takes
+  at most 20 attachments (`400 too_many_attachments`).
+- Images must be PNG, JPEG, WebP, GIF, BMP or TIFF, and the bytes must match
+  the declared type (`400 invalid_image`). Other MIME types are accepted as
+  files.
+- With `sessionID`, only that session can use the upload
+  (`403 attachment_session_mismatch`). Without it, any session can.
+- `name` and `mime` in the prompt must match the upload
+  (`409 attachment_identity_conflict`).
+- An upload not referenced by an admitted prompt expires after one day.
+  Admission pins the upload, so queued prompts survive a daemon restart.
+
+The daemon sends images to the model as image input. It checks that the
+selected model accepts images when the turn starts, not at admission, and a
+model without image input fails the turn. Other files are not read into the
+prompt. The daemon saves them to a local path and adds that path to the user
+message, so the agent can open them with its file tools.
+
+## Read history, context and tool traces
+
+| Need | Request |
+| --- | --- |
+| Transcript of the active branch | `GET /session/{id}/message?order=desc&limit=50`, then follow `cursor.next` |
+| One message | `GET /session/{id}/message/{messageID}` |
+| Durable state changes since a sequence | `GET /session/{id}/history?after=<seq>` |
+| Recent model-visible context | `GET /session/{id}/context` |
+| Conversation tree and branches | `GET /session/{id}/tree`, then `cursor.next` for older nodes |
+| Tool calls with arguments and results | `GET /session/{id}/tool-call?order=latest` |
+| One tool call in full | `GET /session/{id}/tool-call/{callID}` |
+| Output of a running tool | `GET /session/{id}/tool-call/{callID}/output?afterSeq=<n>` |
+| Agent runs started by tools in this session | `GET /agent-run?sessionID={id}` |
+
+Cursors are opaque. Keep the same query parameters while you follow one. A
+cursor whose anchor entry no longer exists, for example after a branch change,
+returns `400 invalid_cursor_anchor`. Start again from the first page.
+
+`/context` is for inspection and is bounded. By default it returns the 100 most
+recent active entries within 500,000 characters, and reports `totalEntries`,
+`retainedEntries`, `retainedChars`, `maxChars` and `truncated`. It keeps
+compaction checkpoints when they are relevant. It is not the exact provider
+prompt.
+
+`/tool-call` returns rows in transcript order. With `order=latest` it returns
+the newest window, and `cursor.next` pages toward older calls. `total` counts
+calls that match the filters before paging. Each call's `sequence` is its
+one-based position before filtering. List rows leave `resultProjection` null.
+The single-call endpoint fills it with the result as the model saw it, after
+secret redaction, when the tool projects its results for the model. `result`
+is the redacted canonical result.
+
+Tool output and process output use exclusive integer cursors. Pass
+`cursor.next` back as `afterSeq`. `cursor.truncatedBefore` reports output the
+daemon no longer retains. Live tool output and process handles exist only while
+the daemon runs. Saved tool results survive restarts.
+
+## Answer permission requests and questions
+
+Sessions attached with an approval mode ask before running some tools, and
+`acp` attachments get a `request_user_input` tool. Both create pending requests
+that live in daemon memory while a worker waits:
+
+```text
+GET  /session/{id}/permission
+POST /session/{id}/permission/{requestID}/reply     {"reply":"allow"} or {"reply":"deny"}
+GET  /session/{id}/question
+POST /session/{id}/question/{requestID}/reply       {"answers":["Option A"]}
+POST /session/{id}/question/{requestID}/reject
+```
+
+The daemon announces them with live `session.permission.requested` and
+`session.question.requested` events, and their resolutions with
+`session.permission.resolved` and `session.question.resolved`. Interrupting
+the turn denies its pending permission and rejects its pending question. After
+a reconnect, list the pending requests again. A daemon restart drops them.
+
+## Change the model, compact and fork
+
+- `POST /session/{id}/selection` with `{"provider":"openai","model":"gpt-5.5","reasoningEffort":"high"}`
+  switches the model. The session must be idle (`409 session_busy`). If the
+  conversation does not fit the new model's context even after automatic
+  compaction, the daemon keeps the old model and returns
+  `409 model_context_too_small` with `inputTokens`, `maxInputTokens` and
+  `contextWindowTokens` in `details`. If the switch works but saving the
+  selection fails, the response is `507 selection_metadata_not_saved`.
+- `POST /session/{id}/compact` with `{"reason":"manual"}` starts compaction and
+  returns 202 with an `operationID`. Call `/wait` to know when it finishes.
+- `POST /session/{id}/fork` copies the session, or the path up to
+  `fromEntryID`, into a new session with a new ID. Pass `location` to fork into
+  another directory. The source is never changed.
+- `PATCH /session/{id}` sets `title`, `pinned` or `archived`. Archiving requires
+  an idle session with no queued inputs (`409 session_has_pending_work`).
+- `POST /session/{id}/title/regenerate` asks the session's model for a new
+  title from the saved conversation.
+
+`GET /provider` returns `defaultSelection`, the provider and model a new
+session in that directory would use. `GET /model` returns each model's
+`reasoningEfforts` and `defaultReasoningEffort`.
+
+## Recover a moved workspace
+
+When a session's directory disappears, execution requests fail with:
+
+```json
+{
+  "error": {
+    "code": "session_workspace_unavailable",
+    "message": "Workspace directory no longer exists: /old/project Saved history is intact. Restore the directory or explicitly relocate with `yoke resume 20261117-120642-1d2dae --relocate /new/directory`.",
+    "details": {"sessionID": "20261117-120642-1d2dae", "directory": "/old/project", "status": "missing"},
+    "requestID": "req_..."
+  }
+}
+```
+
+Yoke never creates the missing directory and never falls back to the daemon's
+working directory. A session saved without a directory reports `unconfigured`
+and also needs relocation. The daemon checks the directory at admission and
+again before the turn starts. If the check fails after admission, the input
+goes back to the queue paused, with the same ID and attachments, and the
+session's runtime state records the error in `lastError`. Remove the input or
+unpause it after fixing the directory.
+
+Either restore the original directory, or move the session:
+
+```bash
+curl -X POST "$BASE/session/$SID/relocate" -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"directory":"/new/project","expectedDirectory":"/old/project"}'
+```
+
+The response is the session with its new `location` and `workspace`. The rules:
+
+- The destination must already exist and be a readable directory.
+- Relocating changes session metadata only. It does not move files.
+- `expectedDirectory` is optional. If the saved directory no longer matches it,
+  the daemon returns `409 session_workspace_conflict`.
+- Relocating to the current directory is a no-op.
+- The session must have no running turn, operation, live tool process or queued
+  input, paused or not (`409 session_workspace_busy`). Interrupt, drain and
+  remove queued inputs first.
+- Relocation clears attached client configuration. Clients must attach again.
+
+Saved branches, messages, compaction checkpoints and activated skill
+instructions stay as they were. The next turn discovers configuration, tools,
+skills and MCP servers in the new directory. Connected clients receive the
+durable `session.workspace.relocated` event with `previousDirectory` and
+`directory`.
+
+## Daemon control
+
+| Request | Effect |
+| --- | --- |
+| `GET /daemon` | pid, build, protocol, socket, port, idle exit, busy flag, pending restart and open leases. |
+| `POST /daemon/restart` | Exit so the next client starts current code. Returns `409 daemon_busy` while work runs. With `{"whenIdle":true}` it schedules the exit for when work drains. |
+| `POST /daemon/stop` | Exit. Returns `409 daemon_busy` while work runs. With `{"force":true}` it stops at once and interrupts running turns. |
+| `GET /daemon/lease?client=<name>&pid=<pid>` | Hold a lease without receiving session events. |
+
+The lease stream sends `daemon.lease` with `leaseID`, `pid` and `buildID`, a
+heartbeat comment every 15 seconds, and `daemon.exiting` with the exit `reason`
+(`idle`, `restart` or `stop`) before it closes. The CLI equivalents are
+`yoke daemon status`, `yoke daemon restart [--when-idle]` and
+`yoke daemon stop [--force]`.
+
+## TypeScript client
+
+`clients/typescript` has a small `openapi-fetch` client generated from the
+OpenAPI contract. Its typed `GET`, `POST` and other methods take the same
+paths as this guide, and it adds two convenience methods:
 
 ```typescript
 const client = createYokeClient({ baseUrl, token });
@@ -274,868 +791,4 @@ const fork = await client.forkSession("my-session", {
 });
 ```
 
-Provider catalog responses include `defaultSelection`, resolved from the same
-global and workspace configuration as the CLI. The model catalog includes each
-model's `defaultReasoningEffort` alongside its supported `reasoningEfforts`.
-These values let ACP clients select the configured model without substituting
-a provider's built-in default, and reset thinking correctly when switching models.
-
-## Starting the daemon
-
-```bash
-yoke serve
-yoke serve --open
-```
-
-The default host is loopback-only. `yoke serve` prints the selected port and a
-bearer token. Send that token on protected requests:
-
-```text
-Authorization: Bearer <token>
-```
-
-Uvicorn lifecycle and access logs are quiet by default. Pass `--verbose` when
-you want request logs plus the normal Uvicorn startup and shutdown messages.
-The Yoke listening URL and bearer token are still printed in either mode.
-
-Set `YOKE_HTTP_TOKEN` or pass the CLI token option when a stable token is
-needed. Binding to a non-loopback address requires `--allow-remote` explicitly.
-Do not expose the daemon to an untrusted network. It can read workspace files,
-run tools and processes, and use configured model providers.
-
-`yoke serve --open` launches the packaged UI in the default browser with the
-current bearer token in a URL fragment. Fragments are not sent in HTTP requests,
-so the token does not appear in access logs. The UI stores it in session-scoped
-browser storage and immediately removes it from the address/history URL. When
-the server binds to a wildcard address, the local browser launch uses
-`127.0.0.1` rather than the wildcard host. Query-string token launch URLs remain
-accepted for compatibility and are removed in the same way.
-
-For a Tailscale-only listener, bind directly to the machine's Tailscale address
-instead of `0.0.0.0`:
-
-```bash
-yoke serve --host "$(tailscale ip -4)" --allow-remote
-```
-
-This still requires bearer authentication. The host opt-in controls the bind;
-network reachability remains subject to the machine's firewall and Tailscale
-ACLs.
-
-The health endpoint and packaged browser application are public. Other
-`/api/v1` resources require bearer auth. Browser JSON and SSE requests use the
-same bearer token printed by `yoke serve`. The web application keeps that token
-in session-scoped browser storage, not long-lived local storage. A launch URL
-may supply `?token=...`; the application consumes it and removes it from the
-visible/history URL immediately.
-
-Authentication failures return HTTP 401 with `WWW-Authenticate: Bearer` and the
-normal JSON error envelope.
-
-The browser application is a no-build Preact + HTM application shipped under
-`src/yoke/web`. `GET /`, `/new`, `/session/<id>`, and `/settings` return the
-application shell, and `GET /assets/*` serves the packaged browser modules,
-CSS, vendored dependencies, and licenses. `/settings` is a compatibility alias
-for the home view, not a separate settings screen. These browser routes are excluded
-from the v1 OpenAPI schema. Production does not require Node.js, npm, a CDN, or
-a separate frontend server. Assistant Markdown is sanitized with bundled
-DOMPurify 3.4.17 before display. TeX math is rendered with the bundled KaTeX
-assets. `$...$` and `\(...\)` are
-inline math; `\[...\]` and `$$...$$` are display math. Single-dollar math stays
-on one source line, with no whitespace immediately inside either delimiter.
-Its closing dollar cannot be followed by a digit. The first unescaped dollar
-must be a valid closer, so prices such as `$25 and $30` or `$5-$10` do not
-consume a later formula. Escape literal dollars with `\$`. Code spans, code
-fences, and link destinations stay literal. Math is tokenized before Markdown
-unescapes text, so escaped dollars are never reinterpreted after sanitization.
-Incomplete or invalid formulas remain readable text. The bundled renderer and
-fonts need no external network requests. When image attachments are enabled, the composer
-accepts images from the file picker, drag and drop, and the browser paste event
-used by Cmd+V on macOS or Ctrl+V on other platforms. Composer keyboard behavior
-tracks the interactive CLI: Enter sends or steers, Tab queues, Shift+Tab cycles
-the model's reasoning effort, and Esc Esc interrupts. Shift+Enter, Ctrl+J, and
-Esc then Enter insert a newline; Ctrl+U removes the last pending image. The
-global Shift+Cmd+O shortcut on macOS, or Shift+Ctrl+O on Windows and Linux,
-creates a new session from anywhere in the web UI. Cmd+B on macOS, or Ctrl+B on
-Windows and Linux, toggles the sessions sidebar without stealing the browser's
-Shift-modified variant. From a new-session draft, Cmd+Enter on macOS or
-Ctrl+Enter elsewhere creates and starts that session in the background, then
-opens a fresh draft with the same location, provider, model, and reasoning
-effort instead of navigating into the running session. Open inspectors from
-the Inspect menu, command palette, or slash commands. The browser does not
-capture the terminal CLI's Ctrl+X chords. `/shortcuts` and `?` show the browser
-shortcut summary.
-Alt+V is terminal-specific; browser clipboard security requires Cmd+V/Ctrl+V.
-Typing or pasting text while nothing editable holds focus writes into the
-composer and focuses it, in both a saved session and a new-session draft, so
-writing never costs a click first. Space and Enter are left alone, so they still
-page the transcript and activate the control that holds focus, and modified
-keystrokes stay with their shortcut. An open dialog keeps the keyboard.
-Typing `/` at the start of an empty prompt opens the browser slash-command
-completion menu using `/api/v1/command` metadata. The menu supports keyboard
-navigation and completion; moving the active option with the keyboard keeps it
-inside the menu's own scroll viewport. `/skill <name> [prompt]` and `/mcp <server>`
-complete their arguments from the current workspace catalogs. Supported slash
-commands execute through the corresponding HTTP operation instead of being sent
-to the model as prompt text. Commands that require a saved session are disabled
-while editing a new-session draft.
-Typing `$` anywhere in either composer opens caret-aware skill completion.
-Choosing a skill inserts `$skill-name` without sending, supports several skill
-mentions in one prompt, and remains available when images are attached. Skills
-activate only when the submitted or queued prompt starts running; the prompt API
-and queue transport remain plain text and need no separate activation request.
-Literal dollar tokens that cannot name a Yoke skill, such as `$HOME` or `$5`, do
-not open skill completion or interfere with sending the prompt. The completion
-menu opens above the composer in both saved sessions and new-session drafts.
-
-## Working location palette
-
-The new-session draft and the workspace relocation notice share one working
-location control. The trigger shows the committed location and opens a modal
-palette. Its path parsing and filesystem browsing follow T3 Code's project
-picker.
-
-The input is primary and nothing is selected until an arrow key or click chooses
-a row. Enter and the footer's **Select folder** button confirm the selected
-directory. The row's **Open** button or Right Arrow navigates into a selected
-directory, and Left Arrow returns to its parent. The `..` row is navigation-only.
-Recent projects use the same selection model and an explicit **Select project**
-button. Escape or **Cancel** closes the palette without choosing.
-
-A query that starts with `/`, `~/`, a drive letter, or a UNC prefix addresses
-the filesystem; anything else searches recent projects from
-`/api/v1/location/recent`. A trailing separator means the query names a
-directory, so the whole listing shows. Without one the last segment filters that
-same listing by prefix, and hidden directories appear only when the segment
-starts with a dot. Opening a folder appends its name and a separator, which is
-what moves the listing down a level.
-
-`GET /api/v1/location/browse` lists one directory, including its hidden
-directories, and the browser filters the typed segment locally. One listing
-therefore serves every keystroke within a directory, and a listing already read
-is reused when navigating back to it. Because the filtering is local, the
-listing limit must stay above the number of entries a directory can hold rather
-than truncating before the entry being typed toward.
-
-Each saved session has its own browser composer draft. Prompt text and pending
-image attachments stay with that session while the user navigates to another
-session, inspectors, or other browser routes, and they are restored
-when the session is opened again. Saved-session composer drafts use per-tab
-session storage, so they also survive a page reload without becoming long-lived
-browser data. A successful prompt admission clears that session draft; a failed
-admission restores the exact text and attachments.
-
-Clearing a new-session draft removes its saved text and attachments without
-closing the open composer. Editing or deleting another draft does not save the
-cleared draft again.
-
-Provider image limits apply only to provider-bound projections. When a model
-has a request-wide image limit, Yoke keeps the newest allowed images and
-replaces older image parts with text notes while leaving canonical conversation
-history unchanged. No current built-in model declares a request-wide limit, so
-the limit path only applies to custom providers and tests. A newest user
-message that itself exceeds the provider's per-message limit is rejected
-instead of silently dropping fresh attachments.
-
-## Session and execution model
-
-A saved session is independent of an HTTP connection. Listing sessions does
-not construct model providers or live runtimes. The daemon loads a
-`SessionRuntime` only when an operation needs process-local execution state.
-Session lists and recent-location discovery are served from session rows
-rather than parsing conversation history; list queries never read entry
-payloads. A row stores the selection and tree summary needed by list cards, the
-latest user-message time, the entry count and a revision. The
-session-list response includes the filtered total separately from the paged
-rows, so UI counters do not expose the current page size as product state. The
-browser retains that total during both initial bootstrap and later list
-refreshes, keeping the settled-session shelf available immediately. The
-daemon binds and can open the browser before retention maintenance, which runs
-in a background task, so `yoke serve --open` and list requests never pay for
-it. Steady-state list latency is independent of conversation-history size.
-The CLI and the daemon share the database through WAL. Prompt admission, its
-durable event and the queue change commit in one transaction, and live events
-are published only after that commit. A queue edit based on an old revision
-returns `409 queue_revision_conflict`, and a tree edit that loses a race with
-another writer returns `409 tree_revision_conflict`, whichever process made the
-other change.
-The browser requests `lastUserDesc` ordering for its session sidebar, so agent
-completion, tool activity, title edits, and model changes do not move a session
-ahead of one the user interacted with more recently. Sessions without a user
-message fall back to their creation time. Pinning partitions that recency order
-into pinned sessions followed by the normal inbox without changing relative
-order inside either group. `Alt+Up` and `Alt+Down` follow that same visual order,
-so keyboard navigation matches the rows shown in the sidebar.
-Sidebar status uses current work before historical completion state. `Done`
-means an unreviewed successfully completed turn or a session manually marked
-unread from its right-click menu. Opening the session clears `Done`. A later
-running, stopping, attention, error, or pending-queue state replaces it
-immediately. Queue counts
-separate runnable steer/queued prompts from paused prompts. Session-list pages
-load their queue summaries from one database snapshot. Session-list and single-session refreshes
-keep a newer locally known queue revision instead of letting an older summary
-overwrite the sidebar card. Settling is rejected while the runtime is busy or
-any queued prompt remains, including paused prompts.
-The browser labels the inverse action `Unsettle` in the sidebar, session header,
-and mobile and context menus. Settled rows have a curved-return quick action
-with an `Unsettle session` tooltip. Quick actions appear on hover or keyboard
-focus, and remain visible on touch devices. Search results retain a `Settled`
-label and offer Unsettle rather than Settle for already-settled sessions.
-The conversation header also retains the state label when viewing a settled
-session. Settled ages use the settlement timestamp in both search and the shelf;
-timestamp tooltips identify the event and show its date and time.
-The Settled shelf chevron rotates inside a fixed square SVG box, keeping its
-center stationary when the shelf opens or closes.
-Sending a prompt to a settled session reopens it automatically as part of the
-same prompt-admission request; the browser mirrors that reopen optimistically
-and restores the settled state if admission fails.
-The sidebar connection dot also follows the event-stream state rather than
-remaining green during reconnect or resynchronization.
-Sessions saved as JSONL by earlier releases appear only after
-`yoke db import-legacy`.
-
-Large-session reads use the entry topology stored in the database (id, parent
-and kind per entry, without payloads). The implementation lives in
-`yoke.http.reads.message_index`, with query methods on `SessionMessageIndex`
-and an `IndexStorage` owner that caches one topology per session revision.
-Latest-message, Context, Tree and navigation reads walk that topology and
-decode only the entries they return; on the largest real session (7,564
-entries, 650 MB) the topology query takes about 0.25 s. The shared read cache
-catches up from the rows written since its cached revision, so a growing
-session does not reload its historical prefix after each turn.
-Queue, permission, question, skill, metadata, and process-local tool/runtime
-lookups do not load conversation history merely to prove that a session exists.
-
-`GET /session/{sessionID}/context` is intentionally bounded for inspection. It
-defaults to 100 recent active entries and a 500,000-character text budget and
-reports `totalEntries`, `retainedEntries`, `retainedChars`, `maxChars`, and
-`truncated`. Compaction checkpoints are retained when relevant. The Tree
-inspector likewise pages lightweight nodes, with 200 newest nodes on the first
-page and an opaque cursor for older nodes. The bundled web inspector requests
-80 nodes at a time to keep the sidebar DOM bounded while preserving the wider
-HTTP default for API clients. Navigation previews retain at most 100
-abandoned-entry previews and report the total/truncation state. These bounds are
-HTTP-inspector behavior; they do not change the conversation used by the model
-runtime.
-
-Full-session forks copy the source's entry rows inside one SQL statement
-instead of decoding and reserializing every historical message. The HTTP path
-returns lightweight fork metadata. CLI callers that require an immediately
-materialized `SessionRecord` keep that existing return contract.
-
-The HTTP implementation separates route services in `yoke.http.services`, read
-models and projections in `yoke.http.reads`, and execution ownership in
-`yoke.http.runtime`. The runtime coordinator wires explicit dependencies into
-`TurnAdmission`, `TurnExecutor`, and `TurnFinalizer`. The executor owns worker
-submission, agent preparation, and event marshalling. Finalization owns logical
-completion and retirement; `SessionOperations` serializes idle configuration,
-model selection, compaction, and workspace relocation. Resources, persistence,
-status, and automatic titles have their own owners. These collaborators receive
-only the dependencies and callbacks they use, rather than a runtime object.
-
-Session file policy and index maintenance live in `yoke.session.repository`.
-`SessionStore` owns loading, metadata edits, saving, and forks; its tree writer
-receives the session directory and index service directly. Canonical and legacy
-fixture tests freeze session bytes across migration, metadata edits, navigation,
-and forks. Queue scheduling and list operations are shared in
-`yoke.session.queue`. Both HTTP and CLI prefer unpaused steering inputs, then
-ordinary queued work; the CLI supplies its existing attachment/continuation
-eligibility filter. CLI prompt and image actions use the same revision-state
-installation helpers.
-
-Each session has one serialized execution lane. Different sessions can execute
-at the same time, subject to the daemon-wide active-session limit. Disconnecting
-an HTTP request or event stream does not cancel admitted work. Use
-`POST /api/v1/session/{sessionID}/interrupt` to retire the active generation.
-
-Worker callbacks count tool starts under a lock before scheduling loop-side
-publication, so interruption summaries include starts whose events are still
-waiting on the loop. Retired events remain suppressed from SSE.
-
-Interruption persists dangling-tool recovery and the interrupted-turn marker as
-an append-only suffix. It does not deep-copy or reserialize historical entries;
-existing branches, input identities, and provider-visible context are retained.
-
-`POST /api/v1/session/{session_id}/drain?timeoutMs=30000` requires the same
-bearer authentication as other session routes. It observes physical completion
-of admitted agent workers, including retired generations and their owned
-cleanup. Workers waiting for execution capacity also count. The default timeout
-is 30,000 ms, with an allowed range of 1 through 300,000 ms.
-It returns `{"data":{"drained":true,"activeWorkers":0}}` only after that work
-finishes. A timeout returns HTTP 200 with `drained: false` and the outstanding
-worker count. Canceling the request does not cancel workers or cleanup.
-Queued inputs that have not started are not workers. Drain does not resume them.
-This is a process-local completion observation, not an atomic ownership claim
-or permission grant. New work can arrive after the observation. Interrupt still
-retires the logical generation immediately, and `/wait` still observes logical
-session activity. Neither substitutes for drain.
-
-Completed agents and providers retire on independent daemon workers. A blocked
-provider close cannot delay another session's cleanup. Each retirement retries
-sequentially and retains its resources until cleanup succeeds; it cannot force
-a non-cooperative close callback to return.
-
-Prompt submission uses:
-
-```text
-POST /api/v1/session/{sessionID}/prompt
-```
-
-The request accepts a caller-supplied input ID, `delivery: steer | queue`, and
-`resume`. The daemon persists admission before promotion. Repeating the same ID
-with the same durable admission data returns the original receipt. Reusing it
-with different prompt or delivery data returns `409 input_identity_conflict`.
-
-Pending inputs remain editable until promotion through the revision-checked
-queue endpoint:
-
-```text
-GET   /api/v1/session/{sessionID}/queue
-PATCH /api/v1/session/{sessionID}/queue
-```
-
-Queue patches send `expectedRevision` and an atomic operation list. A stale
-revision returns `409 queue_revision_conflict` without applying any operation.
-
-CLI and HTTP queue mutations share a per-queue cross-process lock covering the
-disk read and commit. Queue and admission writes use unique temporary siblings
-before atomic replacement. They remain separate files, not one crash-atomic
-transaction. Code that reads and later replaces a queue should use
-`yoke.session.queue.prompt_queue_transaction` to avoid interleaved mutations.
-The CLI queue manager supplies the revision it opened. If an HTTP or CLI edit
-changes that revision, saving the manager reloads the current queue and reports
-a conflict. It does not overwrite the intervening edit.
-
-## Events and reconnect
-
-One browser client should keep one global Server-Sent Events connection:
-
-```text
-GET /api/v1/event
-```
-
-The stream multiplexes activity from every loaded session. Completed semantic
-boundaries are also written to the per-session durable event journal. Token and
-tool-output deltas stay process-local and ephemeral.
-
-A slow consumer receives `server.resyncRequired` before its stream closes.
-Shutdown and unsubscribe discard pending live events and release the stream,
-even when the subscriber queue is full. Durable history remains available for
-recovery after reconnecting.
-
-Recover durable events with:
-
-```text
-GET /api/v1/session/{sessionID}/history?after=<seq>&limit=<n>
-```
-
-`after` is an exclusive per-session sequence number. The sequence can contain
-gaps. A reconnecting client should refresh `/session/active`, fetch current
-REST snapshots for visible sessions, then use `/history` from its last durable
-sequence before treating that session as caught up.
-
-## Agent run observations
-
-`GET /api/v1/agent-run?sessionID=<native-session-id>` returns the retained SDK
-prompt runs owned by that session, newest first, in a `data` array. It requires
-the normal HTTP authorization. Missing sessions return 404. Listing observations
-does not start a session, consume command output, or control a worker.
-
-The web inspector's Agents view groups these runs by agent and shows the latest
-run of each. While open, it refreshes on selection, `session.agent.updated`, and
-reconnect. The session view itself has no agent panel. One Python process can host several independently tracked agents.
-Reusing an agent keeps its identity and creates another run, while an unstarted
-agent does not count as running.
-
-Snapshots contain `agentId`, `runId`, owner and parent linkage, model and display
-name, execution status, last tool, timestamps, and a revision. `observation`
-records `live`, `stale`, or `lost` independently of the execution status. A
-`typedUsage` object contains cumulative provider-reported token counts and tool
-uses when available, plus elapsed duration when the run finishes. Missing
-provider counters remain absent rather than appearing as zero. The same usage
-travels through ACP observer records. A Yoke-specific client decoder can project
-these into an Agents pane; the generic T3 ACP route shows tool activity. A restored journal entry does not
-prove that its worker is still running. The
-daemon preserves known outcomes and marks unconfirmed live work as observation
-lost after restart. Neither losing a browser connection nor ending an ACP
-observer terminates a worker.
-
-A lost child-attachment message is not proof of process death. The registry
-retains that launch authority until an authenticated descendant identifies its
-process group or managed cleanup explicitly releases it. Unconfirmed launch
-authority is bounded at 256 unattached launches and 4096 remote launch scopes per
-runtime. Platforms without observable process-group death keep ambiguous crash
-cleanup conservative until explicit release or host shutdown.
-
-If a terminal record leaves registry retention before the HTTP observer sees it,
-the last known running row becomes observation lost. It does not remain a live
-claim, and the daemon does not invent a successful outcome. Optional exception
-class names that cannot be represented in the public contract are omitted as
-`null`; the failed execution still appears.
-
-The host writes bounded lifecycle observations through the session event
-journal. Heartbeats refresh liveness without appending a durable event for every
-tick. Clients use a fresh snapshot after lost notifications or reconnect rather
-than treating the live feed as a complete history. Prompts, tool arguments,
-full agent outputs, credentials, and exception messages are not roster fields.
-The native view lets a snapshot request finish during sustained activity and
-coalesces its pending refresh, rather than cancelling every read on each event.
-
-## Main resources
-
-The v1 API currently exposes typed resources for:
-
-- sessions, active runtime state, messages, context, selection, compaction,
-  fork, title updates/regeneration, pin state, and durable archive state;
-- prompt admission, steering, queueing, queue editing, interruption, and wait;
-- session trees, navigation previews, navigation, and labels;
-- tool discovery, session tool enablement, live tool traces, and sequenced
-  retained tool output;
-- managed process snapshots, output, stdin, interrupt, and terminate;
-- providers, models, reasoning effort metadata, skills, and skill activation;
-- MCP inspection and session-local MCP policy;
-- working-location browsing with real directory completion, plus contained
-  filesystem list, find, and read operations;
-- image and file uploads with durable prompt attachments;
-- process-local permission and question requests for future human-in-the-loop
-  tools and providers;
-- command-palette metadata and capability discovery.
-
-The process and raw live-output inspectors are runtime-retained. Their final
-conversation results may survive restart, but PIDs and retained stdout chunks
-do not. The bundled web UI presents process inspection as a large split-pane
-workspace inspired by the CLI fullscreen inspector. The left pane uses the
-same compact status/session/elapsed/command rhythm as the CLI and defaults to
-running processes only; a Running/All switch reveals completed and failed
-retained processes without making them compete with active work. The newest
-visible process is selected automatically when the current selection falls out
-of the filter. The right pane is dominated by the selected process's retained
-output tail. While it runs, the browser consumes `/process/{id}/output` with an
-exclusive sequence cursor and appends only new chunks. Process-change events
-trigger low-latency reads, with a short polling fallback so a continuously
-chatty process cannot starve its own updates. Full process metadata refreshes
-at a slower cadence and restores the authoritative retained tail if the output
-cursor falls behind truncation. Output follows the live tail until the user
-scrolls upward, then exposes an explicit "Jump to live" action instead of
-stealing the scroll position. Status facts, working directory, wrapping,
-stdin, interrupt, and terminate controls remain adjacent to that terminal
-surface.
-
-The new-session working-location control uses `GET /api/v1/location/browse`
-instead of a browser-native datalist. The endpoint accepts an absolute path or
-a path beginning with `~`, lists real child directories on the Yoke host, and
-returns the exact directory when the typed path is selectable. The web picker
-keeps recent session roots as a separate convenience list, supports keyboard
-navigation and explicit parent-folder traversal, hides dot-directories until
-the typed leaf begins with `.`, and discards stale browse responses when the
-user moves to another path before an older request finishes. A draft changes
-its actual working location only when the user chooses a recent root or uses
-an existing browsed folder, so partial path typing does not trigger provider
-catalog requests against invalid directories.
-
-`/session/active` includes a process-local `activity` label while work is in
-flight. It uses the same status state machine as the CLI (`Thinking`,
-`Streaming`, `Running tool`, `Compacting`, provider retry states, and
-`Recovering`) so browser reconnects can restore the current activity text.
-
-## Session archive state
-
-The visible browser action is called `Settle`, but the HTTP/domain field is
-`archived` to avoid colliding with prompt admission's existing
-`session.prompt.settled` terminology.
-
-```text
-PATCH /api/v1/session/{sessionID}
-  { "archived": true | false }
-
-GET /api/v1/session?archived=true|false
-```
-
-`SessionInfo.archivedAt` is the durable archive timestamp. Archiving is user
-organization only, separate from runtime state, and reopening clears the
-timestamp without changing the conversation.
-
-## Session title regeneration
-
-The browser can request a new title from the saved conversation without
-changing the transcript:
-
-```text
-POST /api/v1/session/{sessionID}/title/regenerate
-```
-
-Yoke builds the title with the same shared title generator used by the CLI,
-using the session's configured provider/model and the full saved conversation.
-This is intentional: title generation can reuse provider cached input even for
-large contexts, so the HTTP performance paths do not replace it with a lossy
-conversation sample. The resulting title is then persisted through the normal
-session patch/event path. The
-`sessionTitleRegeneration` capability flag indicates support.
-
-Untitled sessions use that same shared title generator automatically when the
-first prompt starts. Title generation runs alongside the turn, so prompt
-admission and model execution do not wait for it. The generator sees the saved
-conversation plus the newly promoted user message and uses the session's
-configured provider/model. Yoke publishes the result through the normal
-`session.updated` event. If generation returns no usable title, Yoke falls back
-to the first prompt text, matching the CLI behavior. A title supplied when the
-session is created, or one set manually before generation finishes, is left
-unchanged.
-
-## Browser optimistic updates
-
-The packaged web client applies mutations locally when their immediate result
-is deterministic, then reconciles against the authoritative response or SSE
-state. Prompt admission paints the caller-supplied input immediately, queue
-edits retain pending local operations across stale snapshots, session title,
-pin, archive, model/effort, tool, skill, and MCP changes are local-first, and
-permission/question replies disappear immediately with rollback refreshes on
-failure. New-session submission switches into the created session and paints
-the prompt before admission completes. Compaction shows its local activity
-state immediately. Tree labels serialize revision-checked mutations while
-keeping the newest local label visible.
-
-Provider/model and reasoning-effort changes are serialized against prompt
-turns, but they are configuration mutations rather than agent activity. They do
-not publish a transient `running` session state, so changing effort does not
-replace the composer send controls or mark the session as Working.
-
-Normal prompt submission transfers the draft from the composer to the
-optimistic transcript before waiting for HTTP admission. The textarea is
-briefly locked during that admission boundary so the same prompt cannot remain
-visible in both the editor and chat. If admission fails, the browser removes
-the optimistic row and restores the exact text and attachments to the composer.
-Newly created sessions track message-snapshot hydration separately from local
-session metadata. Returning to a session that was created optimistically but
-never received an authoritative message page therefore reloads its transcript
-instead of treating an empty local message array as final.
-The regular composer grows with its text up to a compact height cap and offers
-an explicit larger editing mode for long prompts. The expand/compact control
-lives at the top-right of the composer itself; the larger mode raises only the
-local editor height limit and does not alter draft or submission semantics.
-Provider and model selection uses one searchable web picker rather than native
-browser selects. The picker loads the model catalog across providers, groups
-rows by provider, marks the current model, and shows context-window and
-thinking metadata in the same choice list. Arrow keys, Home/End, and
-PageUp/PageDown move the active model while keeping that row visible in the
-scrolling results list; Escape closes the picker and returns focus to its
-trigger. Reasoning effort remains adjacent
-as compact web buttons, so the entire model control uses one consistent custom
-interaction on desktop and mobile.
-Switching to a smaller-context model first attempts the normal transactional
-automatic compaction. If the resulting context still does not fit, the server
-returns `model_context_too_small` with the estimated input size and target
-context budget. The picker stays open, restores the previous selection, and
-shows the failure inline instead of leaving the optimistic model change visible.
-When the responsive layout collapses the session sidebar, fine-pointer devices
-also expose it from the extreme left screen edge. The edge reveal is transient,
-uses a short hover delay to avoid accidental activation, stays open while the
-pointer is inside the sidebar, and closes after a brief leave grace period. The
-hamburger button still controls the normal persistent open state, and touch-only
-devices do not receive an invisible edge target.
-Above the composer, opposite the model selectors, a compact context-window ring
-shows the latest model-visible input usage as a percentage. Its tooltip includes
-the measured input/max token counts, remaining capacity, and explains that Yoke
-may compact before the model's raw limit to preserve output headroom. The latest
-safe provider-reported context-usage snapshot is stored in lightweight session
-metadata as soon as the model response arrives, then journaled when the turn
-settles. This keeps the ring current across reconnect/reload during long tool
-runs without replaying old history. Normal runtime checkpoints preserve the
-measurement; changing provider/model, forking, or checking out a different tree
-branch clears it rather than displaying usage from a different provider
-context.
-
-Turns that run for at least one minute and produce a persisted turn leaf keep the
-same compact summary used by the CLI. The web transcript renders it after the
-turn as `Worked for 1m23s · 7 tools`. Tool count follows runtime tool-start
-events, so parallel calls count individually, and the summary survives reloads
-and message pagination because it is stored on the persisted turn leaf.
-The daemon warms the lazy HTTP runtime import in the background after first
-paint, and cold first-turn reconstruction gives the admission response a short
-grace before a large saved session begins CPU-heavy parsing. During that cold
-state the runtime reports `Loading session`, then changes to `Thinking` after
-the saved model state is ready. SessionRuntime is also the sole owner of loading
-active conversation state; the HTTP agent factory no longer restores the same
-history a second time before provider work can begin.
-
-When the session's latest active compaction checkpoint is self-contained, cold
-turn startup reconstructs the compact runtime state from the stored topology
-and the selected entries instead of deserializing the historical session
-prefix. The reconstructed provider-message projection and conversation cache
-scope are required to match the established full-tree projection. Without such
-a checkpoint, startup falls back to the normal session read.
-
-Turn checkpoints and settlement persist only the suffix created by that turn,
-grafted onto the canonical saved leaf, so the reduced runtime representation
-never rewrites historical parent links. Full-history startup owns mutable entry
-shells while borrowing historical message values; provider-bound normalization
-still creates defensive message copies. Compaction fast paths are guarded by
-differential tests against the established provider projection, including tool
-turns, images, skills, prior checkpoints, branches, response continuity, and
-conversation cache identity.
-
-Operations that must wait for an authoritative response expose pending state
-instead of pretending the result already happened. The browser shows compact
-spinners for transcript and Tree pagination, Tree navigation previews and
-checkout, manual compaction, and other blocking composer/inspector work while
-preventing duplicate submissions.
-
-Transcript pagination treats the server cursor as recoverable browser state.
-If a reconnect or branch change leaves an old cursor anchor invalid, the web UI
-rebases from the current newest message page and retries the older-page read.
-If a rewound cursor returns only entries that are already loaded, the client
-advances through duplicate-only pages until it reaches genuinely older history
-or the beginning of the conversation. Pagination failures are shown as notices
-instead of leaving the "Load older turns" button looking like a no-op.
-
-While a session runtime is running, the conversation keeps a persistent status
-row at the bottom of the chat. Runtime activity such as `Thinking`, `Running
-tool`, or `Compacting` refines the label, but transiently missing activity data
-falls back to `Working`. Live tool rows do not suppress this status, and stale
-activity cannot keep it visible after the runtime returns to idle.
-
-The transcript renders each tool call as one row. Persisted tool results are
-folded into the originating call row when both are present in the loaded
-window, while an orphaned result at a pagination boundary remains visible until
-its call is loaded. Chat rows use the same outcome checks as Tool activity for
-live events and saved results, so failures and cancellations keep their labels
-and glyphs after persistence or reload. Failure checks include `ok: false`, MCP
-`isError`, timeouts, and nonzero exit codes. Search exit code 1 remains successful
-for `rg`, `grep`, and `fd` when the result does not explicitly report failure.
-Consecutive tool-only assistant batches are visually joined
-into one dense run, so sequential batches no longer inherit full assistant-turn
-spacing between them. Commentary that launches tools also stays joined to an
-immediately following tool-only batch, so one continuous tool run does not gain
-a blank turn gap after its introductory text. Text-only commentary and final
-text keep normal separation.
-Provider-visible messages injected by tools, such as the multimodal user-role
-message produced by `attach_image` or `image_generation`, are persisted as
-`tool_context` nodes rather than real user turns. They remain in provider/runtime
-context unchanged, but normal web and CLI chat scrollback excludes them and Tree
-shows them only as technical nodes. Older sessions that persisted these injected
-images as `user` nodes are recognized from their tool-call ancestry on read, so
-they do not reappear as false user messages after upgrade.
-When one assistant response contains several tool calls, Yoke persists every
-matching tool result before appending any provider-visible `tool_context`
-messages. This keeps the provider tool-call batch valid for parallel image
-attachments and other tools that inject follow-up context. If a previous build
-or an interrupted process left an incomplete tool batch at the active leaf,
-runtime resume appends explicit cancelled results for the unfinished calls before
-accepting another user message. User interruption checkpoints apply the same
-closure rule.
-User turns are right-aligned and assistant turns remain
-left-aligned, using placement rather than a separate role color. User messages
-always show their role/time metadata. Within each assistant turn, only the last
-assistant row containing text shows assistant role/time metadata, so intermediate
-commentary and tool-calling rows do not repeat the same rail.
-
-Web inspectors share a modal with Tool activity, Tree, Processes, Agents,
-Context, and Configuration views. Tools, Skills, and MCP servers sit within Configuration.
-Small screens use a fullscreen list or detail view with a Back control rather
-than two short stacked scrolling panes. Selection, filters, and reading positions
-stay with each session and view while the browser application remains open.
-The modal contains keyboard focus, makes the background inert, and restores
-focus to its opener when closed. The command palette can open above it without
-unlocking the background. View-local keyboard help replaces the permanent
-shortcut footer. See [Web inspectors](web-inspectors.md) for the interaction and
-verification details.
-
-Tool activity requests the latest 100 calls, displays them oldest to newest, and
-selects the latest call on first opening. Load earlier follows the retained
-cursor toward older history. Search and status filters explicitly apply to the
-loaded window. Canonical sequence, not an opaque call ID or completion time,
-determines call order. Saved calls without timestamps say the time was not
-recorded; the browser does not invent a timestamp. Row start times and durations
-are separate. Completing a call does not move it within the list.
-
-New calls do not replace a selected older call. Reading earlier history pauses
-following and exposes a new-call count; Latest explicitly returns the list to
-the newest window. A call opened from chat can remain selected outside the
-loaded page or current filters, with a separate highlighted row explaining that
-state. Switching views restores both the selection and detail. Stale responses
-cannot overwrite a newer selection. Same-call detail requests are coalesced,
-and saved calls do not request the runtime-output endpoint.
-
-Tool activity shows the model-sent arguments as a function-style call and the
-tool result below it. It does not expose executed-argument normalization or add
-an intent summary. The detail endpoint keeps the canonical redacted `result`
-for compatibility and can also return `resultProjection`, the redacted result
-after the same opt-in projector used for provider context on that specific
-tool-result occurrence. The browser prefers `resultProjection` when present.
-Commands therefore omit runtime bookkeeping, while rg, fd, apply_patch, and
-web search can use the existing TOON 4.1 projections. If a result did not opt
-into projection, or a hook disabled it, `resultProjection` stays null and the
-browser shows the canonical public result.
-
-`GET /api/v1/session/{sessionID}/tool-call` accepts `order=oldest|latest`.
-The default remains `oldest` for existing clients. Both modes return rows in
-ascending canonical order. `latest` chooses the newest bounded window and its
-`cursor.next` loads the preceding window. Keep the same order and filters when
-following a cursor. `total` counts calls matching the filters before pagination;
-each call's optional `sequence` is its one-based position before filtering.
-Missing wall times remain null. Latest-mode cursors are bound to their order,
-session, and filters, while existing oldest-mode cursors remain compatible.
-The default-order current-turn feed and individual runtime details can omit
-global sequence to keep polling independent of saved-history size. The browser
-keeps an already-loaded row's sequence when its runtime detail omits it.
-List responses leave `resultProjection` null so history pagination does not
-pay the projection cost or duplicate projected result text. Individual detail
-responses compute it after public secret redaction. Projection provenance is
-retained from the exact persisted tool-result entry or live completion event;
-the HTTP service does not infer it from the tool name.
-
-The HTTP tool-trace service caches reconstructed saved traces for the most
-recently inspected session, keyed by session-file revision. Moving between
-historical calls reuses that parsed trace map until the session advances or
-HEAD changes. Chronology metadata is confined to inspection; it does not change
-provider-facing messages or their order.
-
-Reconstructed tool context stops at the next user turn, so a later response is
-not attributed to an earlier tool call. Live trace snapshots and merged entries
-copy nested arguments, results, and context rather than exposing mutable store
-state to callers.
-
-Canonical results remain stored for observability and compatibility even when
-the browser renders the provider-facing projection. Running calls can display
-retained live output before a final result exists. Output retention and
-partial-page limits remain explicit in the HTTP trace resources.
-
-Tree is navigation-first. Click a row or use arrows to choose a destination and
-update its preview without moving HEAD. Enter or Continue from here performs the
-move only after the selected destination's preview has loaded. Repeated Enter,
-out-of-order previews, and changed revisions cannot authorize a stale move.
-Escape clears the destination before closing the inspector. Up/Down choose the
-adjacent chronological row, Left chooses a visible parent, Right a visible
-child, Home/End the first or last loaded row, and PageUp/PageDown skip rows.
-Space selects without committing. Search locates shown messages, labels, and
-IDs without removing graph rows or changing their topology.
-
-Messages mode shows user and final assistant messages, plus an exceptional
-current-position anchor when HEAD is technical. All nodes reveals intermediate
-commentary, tools, and controls. Hidden technical parents are bridged to preserve
-the graph. Current loads the real HEAD when it is outside the current window;
-Latest reveals the newest chronological node, which may be on another branch.
-The graph distinguishes current position, selected destination, and latest
-event. Loading older history preserves the visible position, and timestamps
-remain visible on narrow screens.
-
-The stable destination pane shows message text when available, clearly labels
-short previews, and describes what leaves active context. Continuing from an
-ancestor removes its later active descendants from active context without
-deleting them. Prompt restoration, the path being left, and an optional handoff
-note remain available without obscuring the fixed Continue from here action.
-Labels are edited inline. After a successful move the graph returns to the new
-HEAD and clears the previous destination. Existing revision checks remain in
-the navigation API.
-
-Checkpointed tool-calling assistant messages also reconcile with their live
-mid-turn commentary row. Providers may persist that message with a null phase
-even though Yoke emits its text live as `commentary`; the browser treats text
-plus tool calls as the same commentary message. This removes the live tail row
-as soon as the checkpointed message arrives instead of leaving a duplicate at
-the bottom until the turn settles.
-
-Session bootstrap also separates core data from enrichment. Session lists and
-the selected transcript can become interactive without waiting for provider
-readiness probes or Git/location metadata. Queue and human-input snapshots load
-in parallel after the transcript rather than blocking first paint. Optimistic
-generations and mutation chains prevent older HTTP responses or durable events
-from visually undoing a newer click or resurrecting an already durable prompt.
-
-## Files and uploads
-
-Filesystem endpoints canonicalize requested paths and reject traversal or
-symlink escapes outside the authorized root. File responses use an inline
-`Content-Disposition` header with encoded filenames, so non-ASCII names and
-quotes do not break the response.
-
-Prompt images and files use `POST /api/v1/upload`, then reference the returned opaque
-`yoke-upload://...` URI in prompt admission. Uploads are bound to a session.
-Admission pins referenced uploads so queued prompts can survive daemon restart.
-Files are limited to 20 MiB each and a prompt accepts at most 20 attachments.
-Images use Yoke's normal multimodal content and the selected model must support
-images. Generic files produce a saved-file reference for the agent's reading
-tools, not an eager text extraction. File references therefore include the
-daemon-local path the tools need.
-
-`prompt.continuation: true` with empty text and no attachments requests another
-inference on saved conversation state without adding a user message. It is
-different from the admission request's `resume` field, which controls whether
-the daemon starts processing the queue. The continuation flag defaults to false
-and participates in durable admission identity. Existing user input IDs and
-history remain unchanged; new continuation output belongs to the new input ID.
-Continuation requires an existing conversation. Empty ordinary prompts still
-fail validation.
-
-## Human input
-
-Pending process-local requests are available at:
-
-```text
-GET  /api/v1/session/{sessionID}/permission
-POST /api/v1/session/{sessionID}/permission/{requestID}/reply
-
-GET  /api/v1/session/{sessionID}/question
-POST /api/v1/session/{sessionID}/question/{requestID}/reply
-POST /api/v1/session/{sessionID}/question/{requestID}/reject
-```
-
-The shared human-input service exposes blocking worker-side waits. A future tool
-or provider can therefore suspend on a domain request and let the browser answer
-it without calling terminal input functions. Pending requests are process-local
-in v1 because the worker waiting for them is process-local too.
-
-## Client session configuration
-
-Authenticated `PUT /api/v1/session/{id}/client` attaches process-local client
-configuration with `owner`, `mode`, `mcpServers`, and `additionalDirectories`.
-MCP entries accept stdio `command`, `args`, `env`, or `streamable-http` `url`
-and `headers`. Additional directories must exist and be absolute. Duplicate
-server names are rejected. Credentials are never persisted. The response
-contains only the mode, directory list, and server names.
-
-`GET /api/v1/session/{id}/client` returns the current mode and latest plan, or
-null when detached. `DELETE` with `?owner=...` removes only that owner's
-configuration. Replacement and detach require logical idleness and physical
-worker drain. Existing background processes are not stopped by either action.
-Workspace relocation clears attached configuration; reattach at the new root.
-Plans and client configuration remain process-local and disappear on daemon
-restart. [ACP and T3 Code](acp.md) describes tool policy and client behavior.
-
-
-## Runtime ownership and read models
-
-Each loaded session has one asyncio gate for admission, interruption, idle
-mutations, and operation completion. `RuntimeStatus` owns the loop's current turn,
-operation, activity, and error state. Worker callbacks record thread-safe traces
-and usage measurements, then schedule status changes and public SSE publication
-on that loop. Retirement marks the generation before awaiting persistence, so a
-queued callback cannot publish for a retired turn.
-
-`TurnPersistence` serializes checkpoints, final results, and interruption with one
-threading lock. Blocking session storage, queue locks, skill loading, and idle
-mutations run on the registry's executor while the asyncio gate preserves their
-order. Cancellation keeps that gate until a submitted storage mutation finishes.
-`SessionRuntimeResources` owns agents, provider cleanup, process leases, and
-session-local configuration. Workspace relocation resets that owner after its
-old resources close.
-
-Tool registration and execution contexts carry an explicit `ToolSessionContext`
-for MCP policy and client configuration. A runtime fork retains that session
-context independently of provider identity. Provider objects carry no HTTP
-session attributes; tool definitions and provider messages keep their existing
-projection.
-
-The app constructs one message index and injects it into the session read model
-and runtimes. Message, context, tree, and navigation callers use that read model;
-it selects indexed reads and falls back to the signature-consistent snapshot.
-Navigation and labels use `SessionTree` intents for both persistence formats.
-`HttpAppSettings.indexed_runtime_seed` defaults to `True`, including with an
-injected agent factory. Factories must return a `RuntimeAgent` with native session ownership.
-Test doubles implement that native interface too. Set `indexed_runtime_seed` to `False` explicitly when
-testing legacy snapshot startup.
-
-Session-index maintenance logs failed iterations and retries with exponential
-backoff from five to sixty seconds. Successful maintenance resets the delay to
-five seconds. Shutdown cancels all background tasks before joining them, logs
-their failures, and closes session runtimes even when a task has already failed.
+The daemon serves its OpenAPI document at `GET /openapi.json`.

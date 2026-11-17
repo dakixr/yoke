@@ -1,156 +1,163 @@
 # Tool-only MCP server
 
-`yoke-mcp` exposes a compact remote coding harness over MCP Streamable HTTP.
-It reuses Yoke's local tools without instantiating a Yoke agent, provider,
-conversation, session tree, compaction flow, or persistence layer. The MCP
-client remains responsible for reasoning and conversation state.
+This page is for people who connect ChatGPT or another remote MCP client to a
+machine through `yoke-mcp`. It covers starting and configuring the server, the
+tools it exposes, command errors, the downstream MCP gateway, authentication,
+security and deployment. [mcp-composition.md](mcp-composition.md) covers the
+batch, Python, recipe and file-transfer tools in depth.
 
-## Start locally
+`yoke-mcp` serves Yoke's local tools over MCP Streamable HTTP. It does not
+start a Yoke agent, provider or conversation, and it saves nothing. The MCP
+client does the reasoning and keeps the conversation. It is separate from the
+per-user daemon in [http.md](http.md).
+
+## Start the server
 
 ```sh
 yoke-mcp --root /srv/projects/my-app --host 127.0.0.1 --port 8765
 ```
 
-The service exposes:
+The server has two routes:
 
-- `GET /healthz`
-- MCP Streamable HTTP at `POST /mcp`
-- the direct tools: `read_file`, `view_image`, `rg`, `fd`, `skill`, `apply_patch`,
-  `command_exec`, `python_exec`, `process_input`, `agent_runs`, `mcp_inspect`, and `mcp_call`
+- `GET /healthz` returns `{"ok": true}` without authentication.
+- `POST /mcp` is the MCP Streamable HTTP endpoint.
 
-The server also exposes `batch_read`, `result_read`, `process_read`,
-`process_cancel`, `search_then_read`, `workspace_snapshot`, `check_patch`,
-`import_files`, `write_binary_file`, and `export_file`, for 22 default tools.
-`python_exec` includes a parent-owned tool-composition bridge. Explicitly
-configured downstream wrappers may add reviewed names. See
-[Composed MCP work](mcp-composition.md) for schemas, limits, recipes, file
-transfer, and the single-user ownership contract.
+Run one ASGI worker. The server keeps live processes and result handles in its
+own memory, and a second worker would not see them.
 
-`view_image` accepts a local PNG, JPEG, GIF, or WebP path and returns native MCP
-image content while preserving the source bytes. Relative and absolute paths
-follow the same rules as the other file tools. Invalid, unsupported, oversized,
-or excessively large decoded images are rejected before any image is returned.
+## Tools
 
-`mcp_inspect` and `mcp_call` let the authenticated remote client inspect and
-call MCP servers configured through Yoke without starting a Yoke agent.
+The server exposes 22 tools by default:
 
-The `rg` and `fd` tools expose typed search semantics instead of native argument
-strings. `rg` accepts pattern lists, paths, globs, file types, match/result
-modes, context, ignore behavior, sorting, and a global result limit. `fd`
-accepts a pattern, search paths, file types, extensions, excludes, depth and
-time/size filters, ignore behavior, sorting, a global result limit, and an
-optional regex over returned paths. Shell pipelines and subprocess-launching
-switches are intentionally not representable; use `command_exec` when command
-execution or arbitrary shell composition is intended. MCP ripgrep ignores
-`RIPGREP_CONFIG_PATH`, while the ordinary agent `rg` tool retains its native
-configuration behavior.
+| Tool | Purpose |
+| --- | --- |
+| `read_file` | Read a text file. |
+| `view_image` | Return a local PNG, JPEG, GIF or WebP file as native MCP image content, with the original bytes. |
+| `rg` | Search file contents with typed ripgrep options. |
+| `fd` | Find files with typed fd options. |
+| `skill` | Load a skill's instructions and file list. |
+| `apply_patch` | Apply a patch to files. |
+| `command_exec` | Run a shell command or an argv process. |
+| `python_exec` | Run Python in a managed subprocess, with the `yoke_mcp` helper. |
+| `process_input` | Write input to a running process and collect a short response. |
+| `process_read` | Wait for or page output from up to 16 processes. |
+| `process_cancel` | Terminate a process tree and keep its final output. |
+| `agent_runs` | List Yoke SDK agent runs started by managed commands. |
+| `mcp_inspect` | List downstream MCP servers and their tool schemas. |
+| `mcp_call` | Call one downstream MCP tool. |
+| `batch_read` | Run up to 16 independent reads or searches in one call. |
+| `result_read` | Page through a large retained result. |
+| `search_then_read` | Search and return one match window per file. |
+| `workspace_snapshot` | Return Git status, root instructions and selected paths. |
+| `check_patch` | Apply a patch after hash checks, then run named checks. |
+| `import_files` | Download files that ChatGPT passes as file parameters. |
+| `write_binary_file` | Upload bytes in chunks. |
+| `export_file` | Download bytes in pages. |
 
-`rg` returns mode-specific structured output: match/context objects with paths,
-line numbers and submatches, path lists for file modes, or `{path, count}`
-objects for count mode. `fd` returns bounded path strings, or structured
-`path`/`type`/`size_bytes`/`modified_at` metadata when `details=true`. `limit`
-replaces common `| head` usage without shell parsing.
+A reviewed wrappers file can add `downstream_*` tools. See
+[mcp-composition.md](mcp-composition.md#curated-downstream-wrappers).
 
-The typed contract is the only `rg`/`fd` API. Native argument strings and
-execution switches are not accepted; use `command_exec` for arbitrary native
-CLI behavior or shell composition.
+Results carry an output schema and `structuredContent` with a short text
+acknowledgement. Every reply, including image replies, has `yoke/request_id`
+and `yoke/version` in MCP `_meta`. Set `YOKE_MCP_LEGACY_RESULT_TEXT=true` for
+clients that also need the full JSON as text. Process results always include
+the JSON text so clients can see cursors.
 
-The HTTP transport is stateless. One long-lived application runtime owns a
-shared `CommandProcessManager`, so commands that outlive their initial call can
-return an ephemeral process `session_id`. Long waits continue with bounded
-`process_read` calls; `process_input` writes nonempty terminal input and
-collects a short response. The OS process keeps running between MCP calls. Live
-processes and handles are never persisted and are terminated when the service
-stops. Run one ASGI worker unless process ownership is moved to a separate
-executor.
+`view_image` resolves paths like the other file tools. It rejects unsupported,
+invalid, oversized or excessively large decoded images before returning
+anything.
 
-Stdio and Streamable HTTP MCP clients share one session implementation for the
-handshake, paginated tool discovery, metadata parsing, and calls. Both
-transports invalidate their catalogue on `notifications/tools/list_changed`.
-The ACP adapter owns one native SSE subscription and fans events and
-reconciliation ticks out to its process, agent, and session observers.
+### Search tools
 
-## Inspecting SDK agents
+`rg` and `fd` take typed arguments, not command-line strings. `rg` accepts
+pattern lists, paths, globs, file types, match and result modes, context lines,
+ignore behaviour, sorting and a global `limit`. `fd` accepts a pattern, search
+paths, types, extensions, excludes, depth, time and size filters, ignore
+behaviour, sorting, a `limit` and an optional regex over returned paths. You
+cannot express pipelines or switches that start subprocesses. Use
+`command_exec` for those. MCP `rg` ignores `RIPGREP_CONFIG_PATH`.
 
-The injected Python bridge imports only its client-side dependencies in child
-processes. Importing `yoke.mcp_server.execution.client` does not initialize the
-MCP server or its protocol schemas. Public server exports still resolve normally
-when requested from the package.
+`rg` returns structured matches with paths, line numbers and submatches, path
+lists in file modes, or `{path, count}` objects in count mode. `fd` returns
+paths, or `path`, `type`, `size_bytes` and `modified_at` with `details: true`.
+`limit` replaces `| head`.
 
-`agent_runs` reads SDK runs registered by managed command and Python launches.
-Its optional `session_id` filters the hosting process handle returned by those
-tools, not an OS PID or a conversation ID. `active_only: true` selects running
-runs with live observation. `limit` bounds the result; `total` and `truncated`
-describe the matching retained rows before that limit.
+### Skills
 
-The result's `data` array contains separate agent and run identities, execution
-status, observation health, model/name, parent linkage, and last-tool metadata.
-It excludes prompts, process output, and exception messages. Reading it does
-not change agent state or consume process output cursors. Use `process_read`
-to collect the orchestration script's results and verify its exit status.
+`skill` discovers `SKILL.md` files under each `--skill-dir` on every call, so
+added, changed and removed skills show up without a restart. It returns the
+skill's instructions and the absolute paths of every file in its directory.
+Configured directories win over Yoke's built-in skills with the same name.
+Built-in skills remain as fallbacks. An invalid `SKILL.md` is skipped and does
+not break the rest of the catalog.
 
-This MCP runtime is shared by authenticated clients. It does not infer ChatGPT
-conversation ownership from the working directory or process handle. Stale or
-lost observation is not evidence that a worker stopped. See
-[automatic agent tracking](sdk.md#automatic-agent-tracking) for SDK identity and
-lifecycle behavior.
+### Agent runs
 
-## Command arguments and error recovery
+`agent_runs` reads the Yoke SDK agent runs that managed `command_exec` and
+`python_exec` launches registered. Its optional `session_id` is the process
+handle those tools returned, not an OS pid or a conversation ID.
+`active_only: true` selects running runs with live observation. `limit` bounds
+the result, and `total` and `truncated` describe the matching rows before it.
 
-The process tool names match native Yoke: `command_exec`, `python_exec`,
-`process_input`, `process_read`, and `process_cancel`. The old `exec_command`,
-`exec_python`, `write_stdin`, and `process_io` names are not callable aliases.
-Execution `yield_time_ms` and `wait_ms` are rejected. Use `mode` on launch and
-`process_read(wait_ms=...)` for longer follow-up waits. See
-[Shared process tools](process-tools.md) for the full contract and migration.
+Each row has separate agent and run IDs, execution status, observation health,
+model, name, parent links and the last tool. Rows exclude prompts, process
+output and exception messages. Reading does not change agent state or advance
+output cursors. Use `process_read` to collect the script's output and exit
+status. Stale or lost observation does not prove that a worker stopped. See
+[sdk.md](sdk.md) for agent identity and lifecycle.
 
-Use `command_exec` with exactly one command form:
+## Commands and errors
+
+The process tools share one contract with native Yoke, described in
+[process-tools.md](process-tools.md). This section covers what is specific to
+MCP.
+
+`command_exec` takes exactly one command form:
 
 ```json
-{"cmd":"pwd"}
+{"cmd": "pwd"}
 ```
 
 ```json
-{"argv":["git","status","--short"],"workdir":"/srv/projects/my-app"}
+{"argv": ["git", "status", "--short"], "workdir": "/srv/projects/my-app"}
 ```
 
 `cmd` is shell text, never an array. `argv` is a non-empty array of non-empty
-strings and bypasses shell parsing. `command` remains a deprecated alias for
-`cmd`. Supplying both aliases, both command forms, or an unknown argument such as
-`timeout` returns `INVALID_ARGUMENT`; it no longer silently ignores a typo.
-The MCP descriptor is a plain object with named fields, without a root-level
-union. Cross-field rules, including exactly one non-null command form, are
-checked by the runtime.
+strings and skips the shell. `command` is a deprecated alias for `cmd`.
+Passing both aliases, both forms, or an unknown argument such as `timeout`
+returns `INVALID_ARGUMENT`. The tool schema is a plain object. The server checks
+the cross-field rules at runtime. MCP commands use a non-login shell unless the
+call sets `login: true`.
 
-Both execution tools default to `mode="auto"`, which uses the configured
-host-owned initial completion window. `mode="background"` returns immediately.
-A successful process item includes its session ID and
-cursor even when it finishes during the first call. Python's `timeout` remains
-a separate execution deadline in seconds; wait-budget expiry does not stop it.
+Both execution tools default to `mode: "auto"`, which waits up to the server's
+`--default-yield-ms` for the process to finish. `mode: "background"` returns at
+once. Either way a process result includes its `session_id` and `cursor`, even
+when the process finished during the call. `yield_time_ms` and `wait_ms` are
+rejected on launch. Use `process_read` with `wait_ms` to wait longer.
 
-Argument errors return `stage: "input_validation"`, `execution_started: false`,
-a `request_id`, field-level details without input values, and a corrective
-example. Correct the call and retry the intended authorized operation. Do not
-translate an argument error into a permission denial or claim a command was
-attempted when it never started. Arrays are never silently joined into shell
-text. A client may reject an invalid call before sending it to the server;
-such a rejection can only be found in that client's transcript.
+Argument errors return `stage: "input_validation"`,
+`execution_started: false`, a `request_id`, field-level details without the
+input values, and a corrected example. Nothing ran, so fix the call and retry.
+Do not report an argument error as a permission denial. A client may also
+reject an invalid call before sending it, and then only its own transcript
+shows the rejection.
 
-Execution failures are different. `COMMAND_EXIT_NONZERO` retains the command's
-exit code; `COMMAND_TIMEOUT` and `COMMAND_CANCELLED` describe managed process
-outcomes. A caught OS `PermissionError` is `OS_PERMISSION_DENIED`. Other errors
-use `TOOL_ERROR` or `TOOL_EXECUTION_ERROR`, not a guessed permission reason.
-`execution_started: null` means dispatch occurred but the adapter cannot prove
-whether a process started or partial work happened. Inspect the result before
-retrying. Result-encoding failures use `INVALID_TOOL_RESULT`. Never treat an
-error after dispatch as proof that retrying cannot duplicate work.
+Execution errors have their own codes:
 
-Every reply also carries `yoke/request_id` and `yoke/version` in MCP `_meta`,
-including image replies, without changing successful structured payloads.
+| Code | Meaning |
+| --- | --- |
+| `COMMAND_EXIT_NONZERO` | The command ran and exited nonzero. The exit code is included. |
+| `COMMAND_TIMEOUT` | The managed process hit its deadline. |
+| `COMMAND_CANCELLED` | The process was cancelled. |
+| `OS_PERMISSION_DENIED` | The OS raised `PermissionError`. |
+| `TOOL_ERROR`, `TOOL_EXECUTION_ERROR` | Any other failure. |
+| `INVALID_TOOL_RESULT` | The result could not be encoded. |
+
+`execution_started: null` means the call was dispatched but the server cannot
+tell whether a process started or partial work happened. Inspect state before
+retrying. An error after dispatch never proves that a retry is safe.
 
 ## Configuration
-
-CLI flags have environment equivalents:
 
 | Flag | Environment variable | Default |
 | --- | --- | --- |
@@ -158,102 +165,64 @@ CLI flags have environment equivalents:
 | `--host` | `YOKE_MCP_HOST` | `127.0.0.1` |
 | `--port` | `YOKE_MCP_PORT` | `8765` |
 | `--default-yield-ms` | `YOKE_MCP_DEFAULT_YIELD_MS` | `30000` |
-| `--python-timeout` | `YOKE_MCP_PYTHON_TIMEOUT` | `180` |
+| `--python-timeout` | `YOKE_MCP_PYTHON_TIMEOUT` | `180` seconds |
 | `--max-output-tokens` | `YOKE_MCP_MAX_OUTPUT_TOKENS` | `20000` |
 | `--max-remote-wait-ms` | `YOKE_MCP_MAX_REMOTE_WAIT_MS` | `240000` |
-| `--allowed-host` | `YOKE_MCP_ALLOWED_HOSTS` | loopback hosts |
-| `--skill-dir` | `YOKE_MCP_SKILL_DIRS` | built-in skills only |
+| `--allowed-host` (repeatable) | `YOKE_MCP_ALLOWED_HOSTS` (comma-separated) | loopback hosts |
+| `--skill-dir` (repeatable) | `YOKE_MCP_SKILL_DIRS` (platform path separator) | built-in skills only |
 | `--json-response` / `--no-json-response` | `YOKE_MCP_JSON_RESPONSE` | `false` |
 | `--log-level` | `YOKE_MCP_LOG_LEVEL` | `info` |
 
-`YOKE_MCP_ALLOWED_HOSTS` is a comma-separated list of accepted HTTP Host
-headers. Add the public hostname when a reverse proxy or tunnel forwards an
-external hostname to the loopback service.
+`--allowed-host` lists the HTTP `Host` headers the server accepts. Add the
+public hostname when a reverse proxy or tunnel forwards it to the loopback
+port.
 
-Streamable HTTP uses SSE responses by default. The MCP SDK sends periodic SSE
-keepalives while a long tool call is still running, which prevents idle-read
-timeouts in reverse proxies from cutting off the request. Set
-`YOKE_MCP_JSON_RESPONSE=true` or pass `--json-response` only for clients that
-require one buffered JSON response.
+`--max-remote-wait-ms` caps how long one execution or `process_read` call may
+block. It accepts 5,000 to 240,000, so calls return before the five-minute
+deadline common in connectors. Native Yoke's one-hour read limit does not apply
+to MCP. `--default-yield-ms` sets the auto-mode wait and is bounded by the cap.
 
-Remote auto execution uses the configured `--default-yield-ms` host setting,
-bounded by `max_remote_wait_ms`. `process_read.wait_ms` is also capped by
-`max_remote_wait_ms`, at most 240 seconds, so remote waits return before common
-five-minute connector deadlines. The setting may lower this cap but cannot
-raise it. Native Yoke's one-hour read maximum does not apply to MCP. Execution
-does not expose a per-call wait field.
-
-`process_read` defaults to a 60,000 ms wait for all requested sessions to
-finish. Set `until="output_or_completion"` to return on any unread output or
-terminal session, or `wait_ms=0` for a snapshot. Results include a `reason`
-and ordered `items`; each process item has a `cursor` for continuation.
-`next_tool` can be `process_read` while running or while `has_more_output` is
-true. There is no `recommended_wait_ms`. Reading with returned cursors observes
-the same OS processes, including retained output after exit; it never reruns
-commands. Account for any reported retention gap. See
-[reading and paging](process-tools.md#read-until-completion-output-or-a-snapshot).
-
-`--skill-dir` may be repeated. `YOKE_MCP_SKILL_DIRS` uses the platform path
-separator (`:` on Linux and macOS). The MCP-only `skill` tool recursively
-discovers `SKILL.md` files in those directories, returns the full instructions
-and absolute paths for every file in a requested skill directory, and does not
-register itself with Yoke's agent CLI. Configured directories take precedence
-over duplicate skill names; Yoke's built-in skills remain available as
-fallbacks. Discovery runs on every `skill` call, so newly installed, updated,
-renamed, or removed skills are visible without restarting the MCP service.
-Temporarily invalid `SKILL.md` files are ignored so an in-progress installation
-does not break access to the rest of the catalog.
+Streamable HTTP responses use SSE by default. During a long tool call the MCP
+SDK sends periodic keepalives, which stop reverse proxies from closing idle
+connections. Use `--json-response` only for clients that need one buffered
+JSON response.
 
 ## Downstream MCP gateway
 
-`yoke-mcp` always loads the normal Yoke MCP configuration from
-`~/.yoke/mcp.json` and `<root>/.yoke/mcp.json`. Workspace entries override
-global entries with the same server name.
+`mcp_inspect` and `mcp_call` reach MCP servers configured for Yoke in
+`~/.yoke/mcp.json` and `<root>/.yoke/mcp.json`. A workspace entry overrides a
+global entry with the same name. The gateway respects each server's `enabled`,
+`enabled_tools` and `disabled_tools`.
 
-`mcp_inspect` returns compact metadata for configured servers and their allowed
-tools. `mcp_call` invokes one selected tool. The gateway respects each server's
-`enabled`, `enabled_tools`, and `disabled_tools` settings. Calls to the same
-downstream server are serialized because stdio and stateful HTTP MCP sessions
-share client state. Calls to different downstream servers can run in parallel.
+Both tools reread the configuration before each call, so adding, changing,
+disabling or removing a server takes effect without a restart. Unchanged
+servers stay connected. When a server's entry changes, the gateway waits for its
+active call, closes the old client and connects again on the next call. If a
+config file is invalid mid-edit, the gateway returns a reload error and keeps
+the last valid configuration until the file is fixed.
 
-Both gateway tools re-read the global and workspace MCP config before each
-operation. Adding, changing, disabling, or removing a server therefore takes
-effect without restarting `yoke-mcp`. Unchanged server clients stay connected.
-When a server config changes, Yoke waits for any active call to finish, closes
-that server's old client, and creates a new client on demand. Removed and
-disabled servers are closed as part of the same reconciliation.
+Calls to one downstream server run one at a time, because stdio and stateful
+HTTP sessions share client state. Calls to different servers can run in
+parallel. `mcp_call` is marked mutating, destructive and open-world, because
+one generic tool can reach any downstream action. Use `enabled_tools`
+allowlists when the remote client should reach only some actions. Schema
+pinning, result handles and images are described in
+[mcp-composition.md](mcp-composition.md#discovery-results-and-media).
 
-If a config file is temporarily invalid while it is being edited, the gateway
-returns a reload error and keeps the last valid config and clients intact. The
-next call retries the config load, so fixing the file recovers without a
-service restart.
+The server's own authentication covers the remote client's access to
+`yoke-mcp`. It does not authenticate `yoke-mcp` to downstream servers.
+Downstream stdio servers use their configured environment, and Streamable HTTP
+servers can use headers from `.yoke/mcp.json`. The gateway does not run an
+interactive OAuth flow for downstream servers.
 
-The outer Yoke OAuth flow authenticates ChatGPT or another remote MCP client to
-Yoke. It does not authenticate Yoke to downstream MCP servers. Downstream stdio
-servers use their configured environment, and downstream Streamable HTTP
-servers can use headers configured in `.yoke/mcp.json`. Yoke does not currently
-run an interactive downstream OAuth authorization-code flow.
+## Authentication
 
-`mcp_call` is intentionally advertised as a mutating, destructive, open-world
-tool because one generic call can reach downstream read or write actions. Use
-`enabled_tools` allowlists for services where the remote client should only
-reach a subset of actions.
+For private tests, set `YOKE_MCP_BEARER_TOKEN` to require a static bearer token
+on `/mcp`. `/healthz` stays public. A static token is not MCP OAuth and is not
+enough for a published ChatGPT app.
 
-The ChatGPT-facing gateway preserves text and structured data, returns complete
-selected schemas, and supports schema-pinned dispatch, pagination, and bounded
-result handles. Validated downstream images are returned as native MCP image
-blocks. Agent-side MCP projection remains unchanged. See
-[discovery and results](mcp-composition.md#discovery-results-and-media) for the
-server-specific output contract and retention limits.
-
-Set `YOKE_MCP_BEARER_TOKEN` to protect `/mcp` with a static bearer token during
-private deployment tests. The health endpoint remains public. Static bearer
-authentication is not an MCP OAuth implementation and cannot replace OAuth 2.1
-for a published ChatGPT app. A public deployment must use MCP-compliant OAuth
-or another supported private connection mechanism.
-
-For a private, single-user ChatGPT connection, enable the built-in OAuth 2.1
-authorization-code flow with PKCE and Dynamic Client Registration:
+For a private single-user ChatGPT connection, enable the built-in OAuth 2.1
+authorization-code flow with PKCE and dynamic client registration:
 
 ```sh
 YOKE_MCP_OAUTH_ISSUER_URL=https://mcp.example.com
@@ -262,83 +231,61 @@ YOKE_MCP_OAUTH_STATE_FILE=~/.local/state/yoke-mcp/oauth.json
 YOKE_MCP_OAUTH_ALLOWED_REDIRECT_HOSTS=chatgpt.com
 ```
 
-The issuer URL has no `/mcp` suffix. OAuth metadata, protected-resource
-metadata, registration, authorization, token, and consent routes are mounted
-automatically. The state file persists registered clients, access tokens, and
-rotating refresh tokens across service restarts and is written with mode
-`0600`. The authorization password is never exposed to child commands. Keep it
-in the private service environment and enter it only on the server-hosted
-consent page reached during the ChatGPT OAuth flow.
+The issuer URL has no `/mcp` suffix. The issuer URL and password must be set
+together. The server mounts the OAuth metadata, protected-resource metadata,
+registration, authorization, token and consent routes. You type the password
+only on the server's consent page during the ChatGPT OAuth flow.
 
-Keep the OAuth state file outside the source checkout and never commit it. It
-contains generated client identifiers and bearer credentials. Yoke uses a
-generic token subject and normalizes legacy token subjects when loading older
-state files so local account names are not retained in OAuth metadata.
+The state file holds registered clients, access tokens and rotating refresh
+tokens, so they survive restarts. The server writes it with mode 0600. Keep it
+outside the source checkout and never commit it. Tokens use a generic subject,
+so local account names do not appear in OAuth metadata.
 
-The OAuth provider intentionally accepts HTTPS redirect URIs only for hosts in
-`YOKE_MCP_OAUTH_ALLOWED_REDIRECT_HOSTS` (plus HTTP localhost callbacks for MCP
-Inspector testing). The default is `chatgpt.com`.
+Redirect URIs must use HTTPS and a host in
+`YOKE_MCP_OAUTH_ALLOWED_REDIRECT_HOSTS`, which defaults to `chatgpt.com`. HTTP
+`localhost` callbacks are also accepted, for testing with MCP Inspector.
 
-## Filesystem and command security
+## Security
 
-The configured root is a default context, not a sandbox. Relative paths resolve
-from it; absolute paths and `..` remain valid when the operating-system account
-can access them. Run the service as a dedicated account whose filesystem and
-sudo permissions match the intended operations.
+The root is the default directory, not a sandbox. Relative paths resolve from
+it. Absolute paths and `..` work wherever the operating-system account can
+reach. Run the server as a dedicated account whose filesystem and sudo rights
+match what the remote client should do. There is no command denylist. OS
+permissions, narrow sudo rules, network policy, authentication and the
+client's action confirmations are the boundaries.
 
-Child commands inherit the MCP service process environment so developer tools
-see the same provider credentials, API tokens, runtime settings, and `PATH`
-that were available when `yoke-mcp` started. Variables whose names begin with
-`YOKE_MCP_` are removed before child processes start so the remote server's
-bearer token, OAuth settings, and other MCP control values are not propagated.
+Child processes inherit the server's environment, so tools see the same
+provider keys, API tokens and `PATH` that `yoke-mcp` started with. The server
+removes every `YOKE_MCP_*` variable first, so its bearer token, OAuth password
+and other settings never reach commands. On POSIX, the server imports the
+user's login-shell environment once at startup, so a service-manager launch
+behaves like a terminal without sourcing shell files on every call.
 
-On POSIX systems, `yoke-mcp` imports non-`YOKE_MCP_` variables from the user's
-login shell once at startup. This makes a service-manager launch behave like a
-normal terminal session without sourcing shell startup files for every tool
-call. MCP `command_exec` calls still use a non-login shell by default. A caller
-can request Yoke's `login=true` behavior for an individual shell command, or
-pass `argv` instead of `cmd` to launch a process without shell parsing. Treat
-the selected OS account as the real permission boundary.
+`python_exec` and the `yoke_mcp` helper keep the account's normal permissions.
+They are not read-only.
 
-The server does not use a command denylist. OS permissions, narrow sudo rules,
-network policy, authentication, and MCP action confirmations are the security
-boundaries.
+The server has one owner. Every authenticated client shares the same processes
+and result handles. A chat ID or process ID is not an ownership credential.
+Restarting the server ends all live processes and invalidates all handles.
 
-The MCP entry point writes JSON logs. Each received tool request has paired
-`tool_call_started` and `tool_call_finished` events, including early validation
-errors, unknown tools, exceptions, and cancellations. Events include request ID,
-tool name, Yoke version, server PID, stage, outcome, execution-start evidence,
-error code, and duration. A running command's first request ends with the
-`running` outcome; its process handle continues through `process_read`.
+## Logs
 
-Call logs include argument count and the types of `cmd`, `argv`, and `command`,
-never their values. Unknown tool names are redacted. The formatter does not
-render exception strings or tracebacks. Command bodies, outputs, environment
-values, tokens, and file contents are not copied into call logs. Uvicorn access
-logging remains disabled so OAuth query parameters stay out of access logs.
+The server writes JSON logs. Each tool request produces a `tool_call_started`
+and a `tool_call_finished` event, including for validation errors, unknown
+tools, exceptions and cancellations. Events carry the request ID, tool name,
+Yoke version, server pid, stage, outcome, whether execution started, error code
+and duration. A command still running when its first call returns finishes with
+outcome `running`.
 
-## Updating a connected deployment
+Logs record the argument count and the types of `cmd`, `argv` and `command`,
+never their values. Unknown tool names are redacted. The server never logs
+exception text, tracebacks, command bodies, output, environment values, tokens
+or file contents. Uvicorn access logs are off, so OAuth query parameters stay
+out of the logs.
 
-Build and test a pinned release, retain the previous release for rollback, and
-check for live managed commands before restarting. A restart terminates live
-commands and loses their process handles. Do not restart over an active
-validation job merely to update metadata.
+## Deploy and update
 
-After deployment, verify health and authenticated `initialize`, `tools/list`,
-and `tools/call` through the actual endpoint. Check the returned Yoke version,
-command schema, invalid-argument recovery, successful command execution, and
-paired journal events. Health alone does not prove the command contract works.
-
-For a developer-mode ChatGPT connection, open the connection in ChatGPT Plugins,
-select Refresh, confirm the tool metadata changed, and test in a new
-conversation. A server-side update does not guarantee that an existing chat's
-cached descriptor was refreshed. Published plugins instead require their
-reviewed metadata snapshot to be updated. See the official
-[connection testing instructions](https://developers.openai.com/plugins/deploy/connect-chatgpt#refresh-metadata).
-
-## Example systemd topology
-
-Run the MCP and tunnel clients as separate services:
+Run `yoke-mcp` and the tunnel or reverse proxy as separate services:
 
 ```ini
 [Service]
@@ -352,6 +299,19 @@ NoNewPrivileges=true
 PrivateTmp=true
 ```
 
-Bind `yoke-mcp` to loopback. Configure the separate tunnel or reverse proxy to
-forward only the intended public hostname to `http://127.0.0.1:8765`, and keep
-its credentials out of `/etc/yoke-mcp.env`.
+Bind `yoke-mcp` to loopback. Configure the tunnel to forward only the intended
+public hostname to `http://127.0.0.1:8765`, and keep the tunnel's credentials
+out of `/etc/yoke-mcp.env`.
+
+A restart ends live commands and loses their handles. Before updating, check
+for running managed commands, and keep the previous release for rollback. After
+deploying, run `initialize`, `tools/list` and `tools/call` through the real
+endpoint with authentication. Check the reported Yoke version, the command
+schema, an invalid-argument response, a successful command and the paired log
+events. A passing health check does not prove the tools work.
+
+ChatGPT caches tool metadata per conversation. For a developer-mode
+connection, open it in ChatGPT's plugin settings, select Refresh, confirm the
+metadata changed, and test in a new conversation. Published plugins need their
+reviewed metadata snapshot updated. See OpenAI's
+[connection testing instructions](https://developers.openai.com/plugins/deploy/connect-chatgpt#refresh-metadata).

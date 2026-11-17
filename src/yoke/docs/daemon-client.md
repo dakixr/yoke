@@ -1,360 +1,315 @@
-# Daemon client contract
+# Writing a daemon client
 
-CLI command entry points use this contract. Daemon startup and runtime creation
-share the saved-selection adapter in `cli/providers/state.py`; neither imports
-CLI execution helpers. Basic and prompt-toolkit interactive
-clients use the same daemon attachment and event stream as headless clients. The
-HTTP API supports headless, basic and prompt-toolkit clients. Paths have the
-`/api/v1` prefix.
+This page is for developers building a long-lived client of the Yoke daemon,
+such as a terminal UI, an editor plugin or a bridge like `yoke acp`. It covers
+what such a client does beyond the requests in the [HTTP API guide](http.md):
+finding or starting the daemon, handling version skew, attaching with its own
+environment and tool policy, rendering events and reconnecting. Yoke's CLI and
+ACP bridge follow these rules.
 
-## Build identity and restart policy
+## Find or start the daemon
 
-A process keeps its initial build identity. Source checkouts include git HEAD and
-an SHA-256 digest of tracked edits and untracked file contents, so two dirty
-states have different identities. Before deciding to replace a daemon, discovery
-also computes the build a fresh spawn would load from disk, without using the
-process cache. It reads the on-disk version too.
+In Python, call `yoke.daemon.client.connect_or_spawn()`. It returns a handle
+with the endpoint, pid, build and an optional skew warning, and it applies the
+policy in the next section. A client in another language repeats its steps:
 
-Automatic restart requires an idle daemon whose build differs from that fresh
-build. An older client therefore leaves a daemon already running current disk
-code alone. Each discovery attempts at most one restart, including admission
-races. A compatible mismatch attaches with a warning and never schedules a
-restart for later. An incompatible protocol refuses attachment when replacement
-cannot help or work is busy. Use `yoke daemon restart --when-idle` to explicitly
-schedule a restart after runnable or executing work finishes. Paused prompts do
-not keep the daemon busy, and client leases alone do not block a restart.
+1. On Linux and macOS, try the socket at the default path, then the `socket`
+   recorded in `~/.yoke/daemon.json` if that differs. The recorded path helps
+   when your `XDG_RUNTIME_DIR` differs from the daemon's. On Windows, read
+   `port` and `token` from `daemon.json`. A candidate counts only if
+   `GET /health` answers.
+2. If nothing answers, start `python -P -m yoke serve --daemon` detached. On
+   POSIX it runs in a new session. On Windows it uses the `DETACHED_PROCESS`
+   and `CREATE_NEW_PROCESS_GROUP` flags. Its working directory is `~/.yoke`,
+   and its output goes to `~/.yoke/run/daemon.log`.
+3. Poll for up to five seconds. If several clients start a daemon at once, one
+   wins the lock and the others exit with status 0, so polling finds the
+   winner.
+4. Read `GET /daemon` and apply the skew policy below.
 
-## Startup and attachment
+On Windows, and after any restart, read the port and token again. A replacement
+daemon has a new token and may have a new port.
 
-Create a session with `POST /session`. Set `startup: true` to run the existing CLI
-startup resolver and receive a top-level `startup` object alongside `data`.
-Supplying `skills: ["name", ...]` also requests startup resolution. The existing
-web request remains valid and can create an empty session without credentials.
+A spawned daemon does not inherit your shell environment. It receives only
+these variables:
 
-`selection.provider`, `selection.model`, and `selection.reasoningEffort` are CLI
-flags. Model references can include the provider and effort. New-session
-precedence is flags, project settings, user settings, then provider defaults.
-An existing session supplies saved selection defaults through the same CLI
-resume resolver. Explicit flags still win. `headless: true` preserves the CLI's
-strict unknown-model behavior; interactive startup can recover an inherited
-stale model and returns the CLI warning without rewriting settings files.
+- `HOME`, `USERPROFILE`, `PATH`, `LANG`, `LC_*`, `TMPDIR`, `TEMP`, `TMP`,
+  `XDG_RUNTIME_DIR`, `SYSTEMROOT` and `COMSPEC`.
+- `YOKE_DB_PATH`, `YOKE_SESSION_DIR`, `YOKE_HTTP_SESSION_DIR`,
+  `YOKE_DAEMON_PORT` and `YOKE_DAEMON_IDLE_GRACE`.
+- `YOKE_DAEMON_BUILD_ID` and `YOKE_DAEMON_PROTOCOL`, which tests use to
+  simulate skew.
 
-The startup object contains `warnings`, `activeSkills`, `modelSource`, and
-`toolReport`. The report includes the CLI discovery message, active counts by
-source, active and denied tool names, config path, and unmatched tool/capability
-settings. Startup can run against an idle existing session without discarding
-its conversation. Startup errors return `400 session_startup_failed`; the empty
-session remains available for a corrected request.
+The spawner removes activated virtualenv and Conda `bin` or `Scripts`
+directories from `PATH`. Provider API keys, `YOKE_HTTP_TOKEN` and any other
+`YOKE_*` variable stay behind. Each client passes its own environment when it
+attaches, as described below.
 
-Include `client` in creation, or `PUT /session/{id}/client` afterwards:
+## Version skew and restarts
+
+Every process computes a build ID when it starts and keeps it. For a release
+it is the version, such as `3.34.1`. For a git checkout it adds the commit and,
+when the tree has changes, a hash of the tracked diff and untracked file
+contents, for example `3.34.1+g8bc4e1d31613.dirty.5c1e0a9b2d4f7e31`. Two
+different sets of edits produce different IDs. The protocol version is `1`
+and changes only when an older client can no longer drive the daemon.
+
+During discovery the client also computes the build that a newly started daemon
+would load from disk right now. Then it decides:
+
+| Situation | Action |
+| --- | --- |
+| Same build and protocol | Attach. |
+| Daemon idle, and its build differs from the build on disk | Restart the daemon once, then attach to the replacement. |
+| Otherwise, same protocol | Attach and show one warning. |
+| Otherwise, different protocol | Refuse to attach. |
+
+The client restarts with `POST /daemon/restart`, waits for the old pid to exit,
+and starts a new daemon if no other client has. Each discovery restarts at most
+once. If a turn was admitted between the status read and the restart, the
+daemon refuses with `409 daemon_busy` and the client falls back to the warn or
+refuse rule. The comparison is with the build on disk, so an old client does
+not restart a daemon that already runs the current code.
+
+Skew handling never interrupts another client's turn, and a client that
+attaches with a warning does not schedule a restart. Run
+`yoke daemon restart --when-idle` to restart once work drains. Open leases do
+not block a restart, and paused inputs do not count as work.
+
+## Hold a lease
+
+The daemon exits when it has no leases and no work. A client that stays open
+holds a lease in one of two ways:
+
+- `GET /event?sessionID=<id>&client=<name>` streams that session's events and
+  holds a lease for as long as the stream is open. Each stream owns its lease.
+- `GET /daemon/lease?client=<name>&pid=<pid>` holds a lease without events.
+
+`yoke.daemon.lease.hold_lease()` keeps a lease open in Python. When the stream
+ends, it rediscovers the daemon, starting one if needed, and opens a new lease
+every half second until it succeeds. It returns when the daemon sends
+`daemon.exiting` with reason `stop`, so `yoke daemon stop` is final until a
+client starts the daemon again.
+
+## Attach a client
+
+An attachment tells the daemon who is driving a session and with what
+environment and tool policy. Send it with `PUT /session/{id}/client`, or as
+`client` in `POST /session` to create and attach in one request:
 
 ```json
 {
-  "owner": "terminal-unique-id",
+  "owner": "terminal-6f1c2a",
   "kind": "cli",
-  "env": {"PATH": "/usr/bin:/bin", "EXAMPLE_API_KEY": "..."},
-  "cwd": "/absolute/existing/directory"
+  "mode": "full-access",
+  "env": {"PATH": "/usr/bin:/bin", "HOME": "/home/me", "OPENAI_API_KEY": "sk-..."},
+  "cwd": "/home/me/project"
 }
 ```
 
-`kind` defaults to `acp`, preserving existing integrations' client tool and
-approval behavior. `cli` and `web` attachments preserve the ordinary tool set;
-they do not add ACP's question/plan tools or its instruction messages. CLI
-clients should use `full-access` mode and keep local terminal interaction local.
-MCP server injection supports `envVars` to explicitly inherit names from the
-client environment, plus the existing explicit `env` values.
+| Field | Meaning |
+| --- | --- |
+| `owner` | Your client's identity, unique per running client. 1 to 128 characters. |
+| `kind` | `cli`, `web` or `acp`. Defaults to `acp`. |
+| `mode` | Tool policy. Defaults to `full-access`. |
+| `env` | The complete environment for this client's turns. |
+| `cwd` | Absolute existing directory where commands start. Defaults to the session directory. |
+| `mcpServers` | MCP servers to add to this session, used by `acp` attachments. |
+| `additionalDirectories` | Extra absolute directories the client authorizes, used by `acp` attachments. |
 
-A `client` block on `POST /session` attaches that configuration at creation and
-records the client's `kind` as the session origin (`web` when omitted). ACP
-sends its full configuration there, so a new ACP session is recorded as `acp`
-and never runs under the default `full-access` mode.
+`kind` changes what the model gets. An `acp` attachment adds the
+`update_plan` and `request_user_input` tools, registers MCP tools for its
+`mcpServers` even when the user's MCP configuration does not enable MCP, and
+adds system instructions for plan mode and for `additionalDirectories`. `cli`
+and `web` attachments keep the ordinary tool set and instructions. The kind
+given at session creation is saved as the session's origin. Creating a session
+without `client` records `web`. Usage records carry the kind of the attachment
+that admitted each input.
 
-Attachments coexist by owner. Replacing an owner creates a new configuration
-snapshot; admitted turns keep their original snapshot. `GET .../client?owner=`
-selects an owner; the response includes attached `owners`. Omitting the owner
-selects the most recently attached remaining client. `DELETE .../client?owner=`
-removes only that owner and is safe during a turn. It neither interrupts work
-nor changes another attachment's tools, approval policy, or environment.
+`mode` applies to every kind:
 
-## Local transport
+| Mode | Behaviour |
+| --- | --- |
+| `full-access` | Run every tool without asking. |
+| `approval-required` | Run read-only tools. Ask through a permission request before anything else. |
+| `auto-accept-edits` | Like `approval-required`, but also run the file edit tools `write`, `edit` and `apply_patch`. |
+| `plan` | Run read-only tools. Block everything else until the client changes mode. |
 
-Every CLI and ACP invocation discovers or auto-spawns the shared per-user
-daemon. Linux and macOS keep the Unix socket transport and kernel peer-uid
-authorization. Windows reads the selected loopback TCP port and bearer token
-from `~/.yoke/daemon.json`; all requests, event streams and leases send that
-token. The record has a protected DACL granting only the current user access,
-as do the daemon state and run directories. TCP never uses the Unix peer-uid
-authentication exemption.
+The read-only tools are `read`, `extract_file_context`, `rg`, `fd`, `grep`,
+`find`, `ls`, `web_fetch`, `web_search`, `web_research`, `attach_image`,
+`mcp_inspect`, `process_read`, `skill`, `update_plan` and
+`request_user_input`. Modes are a tool policy, not an operating-system sandbox.
+A mode change applies to new tool calls and does not stop background work.
+CLI clients use `full-access` and handle confirmation in the terminal.
 
-Windows lifetime locking uses a nonblocking exclusive byte lock held until the
-process exits. A second daemon exits successfully without starting listeners.
-Startup retains the HTTP line iterator for its configuration lease, so it
-remains open until configuration finishes. Detached startup uses Windows process
-creation flags; stop, restart and idle
-shutdown use the same HTTP lifecycle controls as Unix. Reconnection rediscovers
-the endpoint and token, including after a restart on an ephemeral port. A
-restart waiter also rediscovers TCP before reading the active daemon identity,
-so another client can start the replacement without trapping the waiter on the
-old port.
+Attachments coexist by owner. Sending `PUT` again for the same owner replaces
+that owner's configuration, and inputs already admitted keep the configuration
+they were admitted with. `GET /session/{id}/client?owner=<owner>` returns that
+client's `mode`, latest `plan` and the list of attached `owners`. Without
+`owner` it describes the most recently attached client.
+`DELETE /session/{id}/client?owner=<owner>` removes only that owner. Attaching
+and detaching work while a turn runs. They do not interrupt work or change
+another client's tools, policy or environment.
 
-Agent-run reporting already uses per-launch random capabilities over loopback
-TCP on Windows. The managed Python MCP bridge also uses loopback TCP there,
-with its existing per-execution token, deadline, budgets and revocation checks.
-Reported worker PIDs are observed through Windows process handles and are never
-used as authority to signal arbitrary processes.
+Attachments live only in daemon memory. Relocating the session clears them.
+A daemon restart loses them, and the daemon never stores credentials in
+SQLite, so clients must attach again after reconnecting.
 
-## Admission and capacity
+## Choose the admitting client
 
-Add `clientID` to `POST /session/{id}/prompt` to select the admitting attachment.
-An unknown explicit client returns `409 client_not_attached`. A prompt without
-`clientID`, such as the browser's, uses the most recently attached remaining
-client. After all clients detach, it retains the last attached environment
-without the detached client's approval policy or injected tools. A session that
-has never attached a client uses the daemon environment. Admission captures
-ownership in memory before a competing request can promote that input. Queued
-inputs retain their environment after detach or reconfiguration. An idempotent
-replay retains the first admission's owner.
+Pass your `owner` as `clientID` on `POST /session/{id}/prompt` and on each
+entry of a queue patch's `admissions`. The daemon records that attachment as
+the input's owner before any other request can start it. The owner decides the
+environment and tool policy for the input's turn, even if the client later
+detaches or reconfigures. An idempotent replay keeps the first admission's
+owner.
 
-`session.prompt.admitted` includes `inputID`, `clientID`, `delivery`, and the
-complete `prompt` with text, continuation flag and attachments. Every client on
-the session receives the event. Use input IDs to avoid rendering a locally
-submitted prompt twice. Promotion and settlement retain their existing events.
+| `clientID` | Owner |
+| --- | --- |
+| An attached owner | That client. |
+| An owner that is not attached | Rejected with `409 client_not_attached`. |
+| Omitted, as the browser does | The most recently attached client still attached. |
+| Omitted, after every client detached | The last attached environment, without that client's approval mode or extra tools. |
+| Omitted, never attached | The daemon's own environment. |
 
-The default is 50 simultaneously executing sessions, with 54 worker threads and
-a separate four-thread storage pool. Most model calls wait on network I/O, so
-50 lets many terminals, browser sessions and subagents run at once while still
-bounding physical execution. Excess turns wait on the existing
-FIFO semaphore. Admission succeeds, and `session.active.changed` plus
-`GET /session/active` expose `activity: "Waiting for a slot"` while `state` stays
-`running`. This preserves existing browser busy-state handling. Interrupt works
-while waiting. Attached idle clients consume no execution slots.
+Every client watching the session receives `session.prompt.admitted` with
+`inputID`, `clientID`, `delivery` and the full `prompt`. Record the IDs of
+inputs you submit before you send the request, and skip those IDs when other
+events arrive, so you do not render your own prompt twice.
 
-## Event stream and renderer mapping
+## Environment
 
-`GET /event?sessionID={id}&client={owner}` opens a filtered stream and a daemon
-lifetime lease. Each stream owns its lease. Closing one stream leaves the other
-clients' leases intact. Filtering happens before bounded queue admission, so a
-busy unrelated session cannot force this stream to resynchronize. The stream
-includes its session's durable and live events, `server.connected`, and global
-resynchronization/shutdown notices. Without `sessionID`, the web feed remains
-global. Unknown sessions return 404. Durable recovery still uses
-`GET /session/{id}/history?after={seq}` and transcript reads.
+The attachment's `env` is the base environment for the owner's turns. The
+daemon loads the project's `.env` into a copy and lets your values win. It
+never writes to its own `os.environ`. It does not add `YOKE_HEADLESS`, which
+belongs to the client that chooses headless output. A value you pass, such as
+`YOKE_HEADLESS` itself, reaches tools and child Yoke processes unchanged.
 
-The SSE `event` and envelope `type` use these names. Agent payload keys remain
-in their original snake_case form. CLI clients translate the names back before
-calling their existing renderer. Each live agent event carries `turnID` and
-`inputID`, except existing context snapshots which already carry their IDs.
+Where the environment is used:
 
-| Agent callback | SSE event | Renderer payload |
+- `command_exec` and `python_exec` start in the attachment's `cwd` with a copy
+  of the environment. Python interpreter selection reads that environment's
+  virtualenv.
+- MCP servers inherit the permitted base names and any names listed in
+  `envVars` from the client environment, then apply their own `env`.
+- Provider construction, model catalogs, model switching and automatic titles
+  resolve credentials from the client environment. Credentials saved with
+  Yoke's provider login commands fill in missing values. The daemon's own
+  process keys are not merged into an environment you supplied.
+- Provider plugins and repository tools that read `os.environ` directly still
+  see the daemon process's environment.
+
+A session without any attachment, including one driven only by the browser,
+uses a copy of the daemon's environment plus the project's `.env`. For an
+auto-started daemon that means the allow-listed variables above, project
+values and saved credentials. A daemon started by a service manager keeps its
+service environment, including provider keys from an `EnvironmentFile`.
+
+An equivalent environment produces the same provider requests as running the
+CLI directly. Attaching does not change message content, tool-result order,
+cache scope or compaction format.
+
+## Privacy
+
+The daemon keeps `env` and `cwd` in memory. They are not session or admission
+fields, and they never appear in client status responses or events.
+
+Transcripts are user content and are stored without sanitizing. Messages, tool
+results and compaction summaries keep the exact text the provider saw, so a
+resumed session has the same history and cache identity. Message, tool and
+prompt events mirror that content. A tool that prints an environment value has
+put that value in the conversation.
+
+Diagnostics are sanitized. The daemon registers values of at least eight
+characters from environment variables whose names contain `key`, `token`,
+`secret`, `password`, `credential` or `auth`, plus known provider credential
+names. It replaces those values in tool inspector output, provider debug files,
+API error messages, startup warnings, warning, error and retry events, error
+fields on other events, and its own log formatters, including tracebacks.
+Ordinary values such as `SHLVL=1` and paths stay intact. Values from detached
+clients stay registered until the daemon exits, so late diagnostics from queued
+work are still covered. Sanitizing never changes the transcript or provider
+requests.
+
+Request validation errors omit the request body and rejected values, so an
+invalid attachment cannot echo its environment back.
+
+## Event names
+
+Agent progress reaches clients as live SSE events. The payload keeps the
+agent's snake_case keys and adds `turnID` and `inputID`, except for
+`session.context.updated`. A client that already renders agent callbacks can
+map the names back:
+
+| Agent callback | SSE event | Payload |
 | --- | --- | --- |
-| `model_start` | `session.model.started` | iteration, provider/model timing metadata |
-| `model_end` | `session.model.ended` | iteration, usage, duration, provider/model metadata |
+| `model_start` | `session.model.started` | iteration, provider and model timing metadata |
+| `model_end` | `session.model.ended` | iteration, usage, duration, provider and model metadata |
 | `provider_retry` | `session.provider.retry` | provider, model, attempt, max_retries, delay_seconds, message |
-| `provider_rate_limited` | `session.provider.rate_limited` | same retry telemetry |
+| `provider_rate_limited` | `session.provider.rate_limited` | the same fields as a retry |
 | `provider_recovered` | `session.provider.recovered` | provider, model, attempts |
-| `notice` | `session.notice` | original notice fields |
-| `warning` | `session.warning` | original warning fields |
-| `error` | `session.error` | original error fields |
-| `assistant_message` | `session.message.updated` | content, phase and original message metadata |
+| `notice` | `session.notice` | notice fields |
+| `warning` | `session.warning` | warning fields |
+| `error` | `session.error` | error fields |
+| `assistant_message` | `session.message.updated` | content, phase and message metadata |
 | `tool_execution_start` | `session.tool.started` | tool_name, tool_call_id, tool_arguments, iteration |
-| `tool_execution_output_delta` | `session.tool.delta` | tool_call_id, tool_name, delta/output cursor fields for the live inspector |
-| `tool_execution_end` | `session.tool.ended` | tool_name, tool_call_id, ok, error, result/output, timing |
-| `compaction_summary_start` | `session.compaction.summary.started` | estimated_input_tokens and original progress fields |
+| `tool_execution_output_delta` | `session.tool.delta` | tool_call_id, tool_name, delta and output cursor fields |
+| `tool_execution_end` | `session.tool.ended` | tool_name, tool_call_id, ok, error, result or output, timing |
+| `compaction_summary_start` | `session.compaction.summary.started` | estimated_input_tokens and progress fields |
 | `compaction_summary_end` | `session.compaction.summary.ended` | ok, duration_seconds, response_chars, error |
-| `context_compaction` | `session.context.compacted` | original compaction counts, limits and reason |
-| `compaction_start` | `session.compaction.started` | original callback fields |
-| `compaction_progress` | `session.compaction.delta` | original callback fields |
-| `compaction_end` | `session.compaction.ended` | original callback fields |
-| `context_usage` | `session.context.updated` | original token/limit fields plus existing normalized snapshot |
+| `context_compaction` | `session.context.compacted` | compaction counts, limits and reason |
+| `compaction_start` | `session.compaction.started` | callback fields |
+| `compaction_progress` | `session.compaction.delta` | callback fields |
+| `compaction_end` | `session.compaction.ended` | callback fields |
+| `context_usage` | `session.context.updated` | token and limit fields plus the normalized snapshot |
 
-The audit covers `cli/interactive/turn_renderer.py`, `renderer.py`, the basic
-and headless renderers in `cli/render/status.py`, provider telemetry formatting,
-and runtime turn callbacks. Numeric token accounting survives secret-key
-redaction. `provider_result_projection` remains private. The web controller
-refreshes only its recognized types and ignores the additional types.
+Token counts survive secret sanitizing. Events for a turn that was already
+interrupted are not published.
 
-## Environment and privacy
+When a turn ends, the daemon publishes durable events in this order:
 
-Automatically spawned daemons inherit only HOME/USERPROFILE, PATH, LANG/LC_*,
-TMPDIR/TEMP/TMP, XDG_RUNTIME_DIR, SystemRoot/COMSPEC, and explicit daemon
-configuration. That configuration is YOKE_DB_PATH, YOKE_SESSION_DIR,
-YOKE_HTTP_SESSION_DIR, YOKE_DAEMON_PORT, YOKE_DAEMON_IDLE_GRACE, and the
-YOKE_DAEMON_BUILD_ID/YOKE_DAEMON_PROTOCOL test hooks. Activated virtualenv and
-Conda bin directories are removed from PATH. Provider credentials, virtualenv
-selection, YOKE_HTTP_TOKEN, run attribution and arbitrary YOKE_* variables are
-not inherited. Each attachment supplies its own full environment in memory.
+| How the turn ended | Durable events |
+| --- | --- |
+| The agent returned a result | `session.prompt.settled` with outcome `completed` or `stopped`, then `session.message.updated` with the saved `leafID` |
+| The agent raised an error | `session.prompt.settled` with outcome `failed`, then `session.runtime.failed` with the error |
+| The workspace check failed before the turn started | `session.runtime.failed` only. The input goes back to the queue paused, unsettled. |
+| The turn was interrupted | `session.prompt.settled` with outcome `stopped`, then `session.interrupted` with `reason` set to `user`, `steering` or `shutdown` |
 
-Browser startup and sessions with no attachment explicitly fall back to a copy
-of the daemon process environment plus the project's `.env`. Auto-spawned
-fallbacks therefore contain the allow-listed configuration, project values and
-credentials loaded from the user's configured credential stores. Directly
-launched daemons retain their service environment, including provider credentials
-and a service-supplied YOKE_HTTP_TOKEN. Auto-spawn sanitation does not alter
-systemd EnvironmentFile behavior.
+A client waiting for one input should therefore stop on
+`session.message.updated`, `session.runtime.failed` or `session.interrupted`
+for that `inputID`.
 
-Environment dictionaries and attach cwd values remain in memory. They are not
-session/admission fields and are never included in client status or events.
-The session's project root remains its existing persisted workspace identity.
-Command and Python processes use the admitting client's cwd and copied base
-environment. Python interpreter selection reads that environment's virtualenv;
-interpreter-specific shim directories avoid races between clients. MCP retains
-its explicit inheritance policy, using the client environment for permitted
-base names and `envVars`, then server-specific overrides.
+## Reconnect
 
-Provider construction, catalog validation, model switching and title creation
-use scoped environment resolution. Stored provider credentials still fill
-missing values; explicit client values win and daemon process API keys are not
-merged into an explicitly supplied environment. Provider state follows the
-established fork/promote lifecycle within each client configuration. No provider
-request message, tool-result ordering, cache scope or compaction handoff format
-changes for a CLI attachment with an equivalent configuration.
+Follow the catch-up steps in the
+[HTTP API guide](http.md#stream-events-and-recover-after-a-disconnect) on every
+connect and after `server.resyncRequired`. When the stream drops:
 
-Project `.env` loading reads into a copy. Explicit client values win over project
-values. It does not inject `YOKE_HEADLESS`: that flag disables the CLI status
-renderer and belongs to the client that chooses headless mode. An explicit
-client value is preserved for tools and child Yoke processes. Dotenv loading
-does not mutate `os.environ`.
-Provider plugins and repository tools that directly inspect `os.environ` still
-see the daemon process, as described in the approved design.
+1. Run discovery and the skew policy again. The daemon may have restarted on a
+   new port.
+2. Attach again with a fresh copy of your environment.
+3. Open the filtered event stream, then catch up from history and the
+   transcript, deduplicating durable events by `seq`.
 
-Transcripts are user content. Entries, messages, tool results and compaction
-summaries are persisted without sanitation, preserving the provider's live
-history and cache identity on resume. Message, tool and prompt events mirror
-that content without substitution, so live rendering agrees with history.
-This applies to durable events too. A tool that prints an environment value
-has deliberately added it to the conversation.
+Never retry an ambiguous write automatically. If a prompt admission timed out,
+retry it only with the same input ID, so the daemon can return the original
+receipt. Treat other mutations the same way. Read state first, then decide.
 
-Diagnostic sanitation registers only values of at least eight characters from
-secret-looking environment names containing `key`, `token`, `secret`,
-`password`, `credential` or `auth`, including known provider credential names.
-Ordinary terminal values such as `SHLVL=1`, `COLUMNS=80`, paths, and nonsecret
-sentinels remain intact. Retired and detached clients' secret values stay
-registered in memory until shutdown to cover queued work and late diagnostics.
-Sanitation applies to tool inspectors, provider debug files, API errors, startup
-warnings, warning/error/retry events and diagnostic error fields on other
-events. Existing structured secret-field sanitation in tool inspectors remains.
-It never modifies the transcript or provider request objects.
+After a daemon restart, inputs admitted before the crash lose their private
+owner. They run with a newly attached client's environment or with the daemon's
+fallback environment.
 
-The daemon configures its own root and uvicorn handler formatters, and sanitizes
-its stdio path, including the detached rotating log. Formatters sanitize a copy
-of the rendered record, including tracebacks. Attaching a client installs no
-logging filters and never rewrites shared records or library handlers. Provider
-file logging sanitizes before truncating diagnostic strings. API validation
-errors omit request bodies, rejected input values and exception contexts, so an
-invalid attachment cannot echo its environment or cwd. Client status responses
-expose attachment metadata and owner IDs only.
+## Capacity
 
-An interrupted daemon loses private attachment/admission ownership. Recovered
-work uses a newly attached client's environment or the daemon fallback. Clients
-must reattach after restart; credentials are deliberately not recoverable from
-SQLite. Phase 5 implements this reconnection behavior and terminal rendering.
+The daemon executes up to 50 sessions at once on a pool of 54 worker threads,
+with a separate pool of four threads for storage. Most of a turn is spent
+waiting on the provider's network responses, which is why the limit is high.
+Excess turns wait in FIFO order with `activity: "Waiting for a slot"` and state
+`running`. Attached idle clients use no slots.
 
-The CLI's `SessionConnection` implements transport recovery. Each reader owns
-its attachment and filtered SSE lease. After connecting or receiving
-`server.resyncRequired`, it reads all newer history pages and the active
-transcript before announcing `client.resynced`. Durable sequence numbers prevent
-duplicate replay. A dropped stream repeats discovery, build-skew checks and
-attachment with a new copy of the terminal environment. Ambiguous HTTP writes
-are never retried automatically; admission retries must reuse their input ID.
+## Images from terminal clients
 
-CLI image attachments set `imageProjection: "cli"`. This preserves the existing
-terminal provider message bytes: labels start at one per submitted prompt and
-the image's `attachment_name` remains unset. Omitted projection keeps the web
-and ACP behavior. The flag is durable, survives queue edits and recovery, and
-does not supply arbitrary provider messages. Unsupported CLI images follow the
-existing runtime image projection instead of the web admission rejection.
-
-## Interactive completion and metadata
-
-A terminal records its locally rendered input IDs before POST returns. Its
-session observer skips those IDs and renders other clients' admitted prompts
-and completed answers once. Queue snapshots are presentation state only; the
-daemon promotes queued inputs. Re-admitting a stale UI copy would execute the
-same turn twice, so the local dequeue path is disabled for daemon sessions.
-
-`GET /session/{id}` includes read-only `databasePath` and
-`contextWindowTokens`. `/info` refreshes that response and uses `tree.entryCount`
-and `time.created`/`time.updated`, preserving the terminal metadata display.
-Tool and process inspectors convert validated response DTOs into their existing
-terminal display values. Manual compaction waits for `/wait` before updating UI
-history. Both resume modes use the existing `/relocate` route.
-
-The event reader counts completed reattachments. After an uncertain admission,
-the terminal can wait for a newer attachment before replaying the same input ID;
-other mutations are never replayed automatically.
-
-## Workspace ownership
-
-The daemon owns shared execution leases and exclusive relocation leases in
-memory, keyed by database and session ID. Admission, provider operations, title
-work and background command cleanup retain their leases until physical work
-stops. Clients use the relocation route; no workspace lock files are created.
-ACP holds a daemon lifetime lease over either the discovered socket or its
-explicit authenticated HTTP URL. Its former local ownership flock is gone.
-
-Interactive resume replays the saved transcript before accepting another turn.
-Startup retains saved history and avoids rewriting an unchanged selection and
-skill snapshot. An interactive session whose saved provider was removed reports
-the existing recovery warning and resolves an available provider. Explicit
-selections and headless startup remain strict.
-
-A workspace rejection can pause an input without settling it. The terminal turn
-reader ends that attempt on `session.runtime.failed` and displays its actionable
-error; the daemon retains the paused input. For settled failures the reader waits
-for that error event, which follows `session.prompt.settled`.
-
-Model selection persists any automatic compaction before returning. An unchanged
-conversation uses indexed runtime seeds and metadata writes. If the provider
-switch succeeds but the metadata write fails, the API returns
-`selection_metadata_not_saved` with the effective selection. The terminal keeps
-the successful switch and reports the metadata failure.
-
-Queued CLI `/skill <name>` activation runs at its admitted FIFO position. It
-adds the durable skill marker without a provider call; later queued prompts see
-the newly active instructions.
-The queue adapter tags these commands with the optional durable `prompt.skill`
-field, a private CLI transport extension excluded from the published web/ACP
-prompt schema. Ordinary prompt text, including a headless literal `/skill ...`, has no
-tag and keeps its existing provider projection. Queue edits and admission replay
-retain the tag and its fingerprint.
-
-## Terminal menus and accounting
-
-`/tools` reads `GET /tool?sessionID=...` and applies the visible selection with
-`PATCH /session/{id}/tool`. Capability grouping, source paths and hidden tools
-retain their terminal behavior. `/mcp` reads the session MCP catalog and changes
-session policy with `PATCH /session/{id}/mcp/{server}`. Terminal tool inspection
-sets `includeDisabledTools=true` alongside `includeTools=true`, so disabled tools
-remain visible and can be enabled again. The ordinary catalog keeps its filtered
-view. Repo and global config
-edits happen in the terminal process. `PATCH /session/{id}/mcp` then reloads
-persisted MCP configuration while retaining other session tool choices.
-
-Queue PATCH accepts `admissions`, optional `pendingImages` paths, and `resume`.
-The terminal uses `resume: false` to atomically install new dormant inputs,
-queue edits and image-draft consumption against one `expectedRevision`.
-An unsuccessful patch rolls back admissions, uploads' pins and events together.
-Pending image paths are draft metadata; submitted images use durable upload
-references. GET queue returns `pendingImages`, including after reconnect.
-
-Usage records identify the attachment captured when an input was admitted:
-`cli`, `web` or `acp`. Reattachment and later clients cannot change that input's
-accounting. Automatic title requests inherit the same attribution. Sessions
-created with a client store its kind in `sessions.origin`; creation without a
-client records `web`. Resuming a session preserves its original origin. Origin
-is SQLite metadata; the frozen legacy record JSON format stays unchanged.
-
-
-The terminal moves its event stream and owner attachment on `/new` and `/fork`,
-resetting the durable sequence cursor for the newly selected session. A blocked
-promoted input records its queue position and returns paused at that position,
-so earlier paused items keep their order.
-
-## Phase 5 completion
-
-All terminal entry points use the daemon. The basic and prompt-toolkit UIs accept
-`DaemonSessionBackend` and `DaemonActiveSession` directly. The local CLI executor,
-backend, invocation ownership decorators, workspace ContextVars and local queue
-persistence are removed. Terminal cancellation keeps its display fence and sends
-an interrupt request; the daemon persists the continuation and retires workers.
-The SDK still supports `RuntimeAgent` as a library without a daemon.
+A prompt may set `imageProjection: "cli"` on image attachments. The daemon
+then builds the provider message in the terminal's format. Image labels restart
+at one for each prompt, and images carry no attachment name. Without it, the daemon uses the browser and ACP projection.
+The flag is saved with the input and survives queue edits and recovery.
