@@ -77,9 +77,9 @@ def test_real_getpeereid_reports_current_user_where_libc_has_it():
 def test_skew_policy(busy, protocol, expected):
     assert (
         skew_action(
-            client_build="new",
+            client_build="3.35.0+gnew",
             client_protocol=protocol,
-            daemon_build="old",
+            daemon_build="3.34.1+gold",
             daemon_protocol="1",
             busy=busy,
         )

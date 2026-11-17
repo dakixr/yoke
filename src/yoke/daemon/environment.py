@@ -11,6 +11,15 @@ from yoke.daemon.log import DETACHED_ENV
 # Explicit configuration only: never inherit arbitrary YOKE_* credentials,
 # attachment policy, or run attribution into a process shared by all clients.
 _NAMES = {
+    # HTTPX trust_env and provider TLS switches must survive auto-spawn.
+    "HTTPS_PROXY",
+    "HTTP_PROXY",
+    "ALL_PROXY",
+    "NO_PROXY",
+    "SSL_CERT_FILE",
+    "SSL_CERT_DIR",
+    "REQUESTS_CA_BUNDLE",
+    "YOKE_DISABLE_TLS",
     "HOME",
     "USERPROFILE",
     "PATH",
@@ -38,6 +47,10 @@ def spawn_environment(values: Mapping[str, str]) -> dict[str, str]:
         for key, value in values.items()
         if key.upper() in _NAMES or key.upper().startswith("LC_")
     }
+    # The detached process starts in its state directory, not the client cwd.
+    for name in ("YOKE_DB_PATH", "YOKE_SESSION_DIR", "YOKE_HTTP_SESSION_DIR"):
+        if result.get(name):
+            result[name] = str(Path(result[name]).expanduser().resolve())
     virtual_paths = {
         os.path.normcase(str(Path(prefix) / directory))
         for name in ("VIRTUAL_ENV", "CONDA_PREFIX")

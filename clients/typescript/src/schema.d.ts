@@ -72,6 +72,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/daemon/identity": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Daemon Identity
+         * @description Prove possession of the discovery token before a client discloses it.
+         */
+        get: operations["daemonIdentity"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/daemon/lease": {
         parameters: {
             query?: never;
@@ -1201,7 +1221,7 @@ export interface components {
             limits: components["schemas"]["CapabilityLimits"];
             /**
              * Protocolversion
-             * @default 1
+             * @default 2
              */
             protocolVersion: string;
         };
@@ -1388,6 +1408,15 @@ export interface components {
         DaemonControlResponse: {
             data: components["schemas"]["DaemonControlData"];
         };
+        /** DaemonIdentityData */
+        DaemonIdentityData: {
+            /** Proof */
+            proof: string;
+        };
+        /** DaemonIdentityResponse */
+        DaemonIdentityResponse: {
+            data: components["schemas"]["DaemonIdentityData"];
+        };
         /** DaemonRestartRequest */
         DaemonRestartRequest: {
             /**
@@ -1403,6 +1432,8 @@ export interface components {
             buildID: string;
             /** Busy */
             busy: boolean;
+            /** Databasepath */
+            databasePath: string;
             /** Idleexit */
             idleExit: boolean;
             /** Leases */
@@ -3005,6 +3036,37 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["DaemonStatusResponse"];
+                };
+            };
+        };
+    };
+    daemonIdentity: {
+        parameters: {
+            query: {
+                nonce: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DaemonIdentityResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };

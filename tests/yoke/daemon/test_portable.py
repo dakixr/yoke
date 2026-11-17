@@ -22,22 +22,39 @@ def test_discovery_selects_recorded_tcp_port_and_authenticates(tmp_path, monkeyp
     paths.ensure()
     info = instance.DaemonInfo(123, "build", "1", "", 12345, "private-token", True, 0)
     instance.write_info(paths, info)
+    monkeypatch.setattr(client, "daemon_alive", lambda paths: True)
     seen = []
 
     def handle(request):
         seen.append(request)
+        if request.url.path.endswith("identity"):
+            from yoke.daemon.identity import identity_proof
+
+            return httpx.Response(
+                200,
+                json={
+                    "data": {
+                        "proof": identity_proof(
+                            "private-token", request.url.params["nonce"], 12345
+                        )
+                    }
+                },
+            )
         return httpx.Response(200)
 
     monkeypatch.setattr(client, "sys", SimpleNamespace(platform="win32"))
     monkeypatch.setattr(
         httpx.Client,
         "get",
-        lambda self, route: handle(self.build_request("GET", route)),
+        lambda self, route, **kwargs: handle(
+            self.build_request("GET", route, **kwargs)
+        ),
     )
     endpoint = client.find_daemon(paths)
     assert endpoint == TcpEndpoint(12345, "private-token")
-    assert str(seen[0].url) == "http://127.0.0.1:12345/api/v1/capabilities"
-    assert seen[0].headers["authorization"] == "Bearer private-token"
+    assert "authorization" not in seen[0].headers
+    assert str(seen[1].url) == "http://127.0.0.1:12345/api/v1/capabilities"
+    assert seen[1].headers["authorization"] == "Bearer private-token"
     assert "private-token" not in repr(endpoint)
     paths.info.unlink()
     assert client.find_daemon(paths) is None

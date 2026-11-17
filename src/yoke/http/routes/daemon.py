@@ -44,6 +44,9 @@ async def daemon_status(request: Request) -> DaemonStatusResponse:
             pid=os.getpid(),
             build_id=build_id(),
             protocol_version=protocol_version(),
+            database_path=str(
+                request.app.state.session_service.store.database.path.resolve()
+            ),
             socket=request.app.state.daemon_socket,
             port=getattr(request.app.state, "daemon_port", None),
             idle_exit=lifecycle.idle_exit,

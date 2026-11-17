@@ -21,6 +21,11 @@ def test_fresh_build_tracks_dirty_contents_and_disk_version(tmp_path, monkeypatc
     import subprocess
     from yoke.daemon import build
 
+    from itertools import count
+    from types import SimpleNamespace
+
+    ticks = count(100, 3)
+    monkeypatch.setattr(build, "time", SimpleNamespace(monotonic=lambda: next(ticks)))
     root = tmp_path / "checkout"
     source = root / "src" / "yoke" / "daemon"
     source.mkdir(parents=True)

@@ -120,7 +120,7 @@ def run_daemon_headless(
                 raise ValueError(
                     "Headless mode requires --prompt or prompt text from stdin."
                 )
-            prompt = input_func().strip()
+            prompt = (sys.stdin.read() if input_func is input else input_func()).strip()
             if not prompt:
                 raise ValueError(
                     "Headless mode requires non-empty prompt text from stdin."
@@ -197,6 +197,7 @@ def run_daemon_interactive(
     stderr: OutputStream | None = None,
     resume_id: str | None = None,
     picker: bool = False,
+    all_sessions: bool = False,
     relocate: Path | str | None = None,
 ) -> int:
     """Run basic or prompt-toolkit mode entirely through the daemon."""
@@ -220,10 +221,19 @@ def run_daemon_interactive(
         )
         if picker and resume_id is None and args.session is None:
             sessions = connection.request(
-                "GET", "session", params={"directory": str(root), "limit": 50}
+                "GET",
+                "session",
+                params={
+                    "limit": 50,
+                    **({} if all_sessions else {"directory": str(root)}),
+                },
             ).get("data", [])
             if not sessions:
-                raise ValueError("No sessions found for this workspace.")
+                raise ValueError(
+                    "No sessions found."
+                    if all_sessions
+                    else "No sessions found for this workspace."
+                )
             output_console = build_console(output)
             output_console.print("Sessions:")
             for index, item in enumerate(sessions, 1):
@@ -251,7 +261,7 @@ def run_daemon_interactive(
                     "location": {"directory": str(root)},
                 },
             )["data"]
-        elif resume_id or args.session:
+        elif resume_id or args.session or picker:
             try:
                 existing = connection.session_request("GET")["data"]
                 root = Path(existing["location"]["directory"])
@@ -286,8 +296,8 @@ def run_daemon_interactive(
             input_func=input_func,
             stdout=output,
             stderr=error,
-            replay_session=resume_id is not None,
-            replay_messages=messages if resume_id is not None else None,
+            replay_session=resume_id is not None or picker,
+            replay_messages=messages if resume_id is not None or picker else None,
         )
     except (
         ValueError,

@@ -7,6 +7,7 @@ bearer token. Apply the same version-skew policy before returning either.
 from __future__ import annotations
 
 import os
+import secrets
 import subprocess
 import sys
 import threading
@@ -17,12 +18,14 @@ from typing import Any, Literal, TypedDict
 
 import httpx
 
-from yoke.daemon.build import build_id, fresh_build_id, protocol_version
+from yoke.daemon.build import build_id, fresh_build_id, newer_release, protocol_version
 from yoke.daemon.environment import spawn_environment
+from yoke.daemon.identity import identity_proof
 from yoke.daemon.instance import daemon_alive, read_info
 from yoke.daemon.log import open_spawn_log, startup_error
 from yoke.daemon.paths import DaemonPaths
 from yoke.daemon.transport import Endpoint, TcpEndpoint, client_options
+from yoke.session.repository.utils import default_database_path
 
 SPAWN_TIMEOUT_SECONDS = 5.0
 
@@ -68,12 +71,13 @@ def skew_action(
 ) -> SkewAction:
     """Decide how a client attaches to a daemon built from other code.
 
-    Restart only an idle daemon that differs from a fresh spawn. Compatible
-    skew attaches with a warning; incompatible skew refuses.
+    Automatically move only toward a strictly newer on-disk release. Different
+    trees at the same version warn, so reconnecting leases cannot ping-pong.
+    Compatible skew warns; incompatible skew refuses without interrupting work.
     """
     if client_build == daemon_build and client_protocol == daemon_protocol:
         return "attach"
-    if not busy and daemon_build != (disk_build or client_build):
+    if not busy and newer_release(disk_build or client_build, daemon_build):
         return "restart"
     return "warn" if client_protocol == daemon_protocol else "refuse"
 
@@ -87,11 +91,24 @@ def find_daemon(paths: DaemonPaths | None = None) -> Endpoint | None:
     paths = paths or DaemonPaths.default()
     info = read_info(paths)
     if sys.platform == "win32":
-        if info is None or info.port is None or not info.token:
+        if (
+            info is None
+            or info.port is None
+            or not info.token
+            or not daemon_alive(paths)
+        ):
             return None
         try:
             endpoint = TcpEndpoint(info.port, info.token)
         except ValueError:
+            return None
+        if not _verified_tcp(endpoint):
+            if info.protocol_version != protocol_version():
+                raise DaemonIncompatible(
+                    "The running Yoke daemon cannot prove its TCP identity with "
+                    f"protocol {info.protocol_version}. Upgrade and restart that "
+                    "daemon explicitly before attaching this client."
+                )
             return None
         return endpoint if _healthy(endpoint) else None
     candidates = [paths.socket]
@@ -151,6 +168,16 @@ def connect_or_spawn(
     socket_path = find_daemon(paths) or _spawn_and_wait(paths, timeout)
     with unix_client(socket_path) as client:
         status = _data(client.get("daemon"))
+    database_path = status.get("databasePath")
+    if database_path is not None:
+        requested = default_database_path().resolve()
+        actual = Path(database_path).expanduser().resolve()
+        if requested != actual:
+            raise DaemonUnavailable(
+                f"Yoke database mismatch: client requested {requested}, but the "
+                f"running daemon uses {actual}. Use the daemon database path or "
+                "stop it explicitly before starting with another YOKE_DB_PATH."
+            )
     action = skew_action(
         client_build=build_id(),
         disk_build=fresh_build_id(),
@@ -175,13 +202,20 @@ def connect_or_spawn(
             f"The running Yoke daemon ({status['buildID']}, protocol "
             f"{status['protocolVersion']}) is incompatible with this "
             f"client ({build_id()}, protocol {protocol_version()}). "
-            "Restart the client to load current code, or retry once turns finish."
+            "Upgrade/restart the older client or daemon explicitly, or retry once "
+            "turns finish if a newer on-disk release is available."
+        )
+    if database_path is None:
+        raise DaemonIncompatible(
+            "The running Yoke daemon does not report its database path. "
+            "Upgrade and restart the daemon before attaching."
         )
     warning = None
     if action == "warn":
         warning = (
             f"Yoke daemon runs {status['buildID']}, this client is {build_id()}; "
-            "attached with compatible protocol. Restart the client to load current code."
+            "attached with compatible protocol. Automatic restart requires a newer "
+            "release on disk; align client and daemon versions to remove this warning."
         )
     return DaemonHandle(
         socket=socket_path,
@@ -249,6 +283,24 @@ def _spawn_and_wait(paths: DaemonPaths, timeout: float) -> Endpoint:
     raise DaemonUnavailable(
         f"Yoke daemon did not start within {timeout:.0f}s; see {paths.log}"
     )
+
+
+def _verified_tcp(endpoint: TcpEndpoint) -> bool:
+    """Challenge the listener without disclosing our bearer capability first."""
+    nonce = secrets.token_hex(32)
+    try:
+        with httpx.Client(
+            base_url=f"http://127.0.0.1:{endpoint.port}/api/v1/",
+            timeout=2.0,
+            trust_env=False,
+        ) as client:
+            response = client.get("daemon/identity", params={"nonce": nonce})
+            proof = _data(response)["proof"]
+        return isinstance(proof, str) and secrets.compare_digest(
+            proof, identity_proof(endpoint.token, nonce, endpoint.port)
+        )
+    except (httpx.HTTPError, DaemonUnavailable, KeyError, ValueError, TypeError):
+        return False
 
 
 def _healthy(socket_path: Endpoint) -> bool:

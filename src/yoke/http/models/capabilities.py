@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from yoke.daemon.build import PROTOCOL_VERSION
 from yoke.http.models.common import ApiModel
 
 
@@ -41,7 +42,7 @@ class CapabilityLimits(ApiModel):
 
 
 class CapabilitiesData(ApiModel):
-    protocol_version: str = "1"
+    protocol_version: str = PROTOCOL_VERSION
     features: FeatureFlags
     limits: CapabilityLimits
 

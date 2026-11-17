@@ -105,6 +105,7 @@ def register_resume_command(app: typer.Typer) -> None:
                 run_daemon_interactive(
                     build_cli_args(model=model, root=root),
                     picker=True,
+                    all_sessions=all_sessions,
                 )
             )
         from yoke.cli.backend.startup import run_daemon_interactive

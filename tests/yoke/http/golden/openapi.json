@@ -517,7 +517,7 @@
             "$ref": "#/components/schemas/CapabilityLimits"
           },
           "protocolVersion": {
-            "default": "1",
+            "default": "2",
             "title": "Protocolversion",
             "type": "string"
           }
@@ -998,6 +998,33 @@
         "title": "DaemonControlResponse",
         "type": "object"
       },
+      "DaemonIdentityData": {
+        "additionalProperties": false,
+        "properties": {
+          "proof": {
+            "title": "Proof",
+            "type": "string"
+          }
+        },
+        "required": [
+          "proof"
+        ],
+        "title": "DaemonIdentityData",
+        "type": "object"
+      },
+      "DaemonIdentityResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/DaemonIdentityData"
+          }
+        },
+        "required": [
+          "data"
+        ],
+        "title": "DaemonIdentityResponse",
+        "type": "object"
+      },
       "DaemonRestartRequest": {
         "additionalProperties": false,
         "properties": {
@@ -1021,6 +1048,10 @@
           "busy": {
             "title": "Busy",
             "type": "boolean"
+          },
+          "databasePath": {
+            "title": "Databasepath",
+            "type": "string"
           },
           "idleExit": {
             "title": "Idleexit",
@@ -1072,6 +1103,7 @@
           "pid",
           "buildID",
           "protocolVersion",
+          "databasePath",
           "idleExit",
           "busy",
           "restartPending",
@@ -5345,6 +5377,49 @@
           }
         },
         "summary": "Daemon Status"
+      }
+    },
+    "/api/v1/daemon/identity": {
+      "get": {
+        "description": "Prove possession of the discovery token before a client discloses it.",
+        "operationId": "daemonIdentity",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "nonce",
+            "required": true,
+            "schema": {
+              "maxLength": 64,
+              "minLength": 64,
+              "pattern": "^[0-9a-f]{64}$",
+              "title": "Nonce",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DaemonIdentityResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          }
+        },
+        "summary": "Daemon Identity"
       }
     },
     "/api/v1/daemon/lease": {

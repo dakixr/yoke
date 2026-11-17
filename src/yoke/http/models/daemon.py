@@ -20,6 +20,7 @@ class DaemonStatusData(ApiModel):
     pid: int
     build_id: str
     protocol_version: str
+    database_path: str
     socket: str | None = None
     port: int | None = None
     idle_exit: bool
@@ -53,3 +54,11 @@ class DaemonControlData(ApiModel):
 
 class DaemonControlResponse(ApiModel):
     data: DaemonControlData
+
+
+class DaemonIdentityData(ApiModel):
+    proof: str
+
+
+class DaemonIdentityResponse(ApiModel):
+    data: DaemonIdentityData

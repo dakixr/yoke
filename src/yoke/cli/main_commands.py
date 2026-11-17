@@ -42,8 +42,7 @@ def register_commands(app: typer.Typer) -> None:
             typer.Option(
                 "--session",
                 help=(
-                    "Persist conversation under "
-                    "[bold].yoke/sessions/<name>.json[/bold]."
+                    "Persist the conversation in SQLite, keyed by this session name."
                 ),
             ),
         ] = None,
