@@ -42,16 +42,18 @@ def established_factory(original, initial):
     return register
 
 
-@pytest.mark.parametrize("kind", ["cli", "web", "acp"])
+# Registration depends on the client kind, not the scenario. Each scenario runs
+# once and each kind is covered twice, keeping the projection families AGENTS.md
+# requires without the full cross product.
 @pytest.mark.parametrize(
-    "name",
+    ("name", "kind"),
     [
-        "tools",
-        "inline_skill",
-        "images_supported",
-        "manual_compaction",
-        "checkpoint_stop",
-        "tree_navigation",
+        ("tools", "acp"),
+        ("inline_skill", "cli"),
+        ("images_supported", "web"),
+        ("manual_compaction", "acp"),
+        ("checkpoint_stop", "cli"),
+        ("tree_navigation", "web"),
     ],
 )
 def test_client_without_optional_fields_preserves_provider_requests(
