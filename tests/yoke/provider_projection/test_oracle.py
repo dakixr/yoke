@@ -201,7 +201,8 @@ def scenario(driver: Driver, name: str, normalizer: Normalizer) -> None:
             True,
         )
         for name in SCENARIOS
-    ],
+    ]
+    + [("checkpoint_stop", "in_process", True)],
 )
 def test_provider_projection_oracle(
     tmp_path: Path,

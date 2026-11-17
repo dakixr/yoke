@@ -6,6 +6,7 @@ from collections.abc import Sequence
 import secrets
 from typing import overload
 
+from yoke.agent.interruptions import is_interruption_notice
 from yoke.agent.models import ConversationEntry
 from yoke.agent.models import MemorySnapshot
 from yoke.agent.models import Message
@@ -98,7 +99,9 @@ class SessionTree(SessionTreeNavigation, SessionTreeMutations):
         for message in messages or ():
             if not isinstance(message, Message):
                 raise TypeError("Session messages must be Message values.")
-            if message.role == "system":
+            if is_interruption_notice(message):
+                tree.append_control({}, message=message)
+            elif message.role == "system":
                 tree._append_entry("instruction", message=message)
             else:
                 tree._append_imported_message(message)
@@ -150,6 +153,9 @@ class SessionTree(SessionTreeNavigation, SessionTreeMutations):
             if message.role in {"system", "user"} and parsed is not None:
                 if snapshot is not None:
                     tree.append_snapshot(snapshot)
+                continue
+            if is_interruption_notice(message):
+                tree.append_control({}, message=message)
                 continue
             if message.role == "system":
                 continue

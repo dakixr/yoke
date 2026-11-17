@@ -7,6 +7,8 @@ from contextlib import nullcontext
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from yoke.agent.context.helpers import append_control_message
+from yoke.agent.internal_events import INTERNAL_EVENT_METADATA_KEY
 from yoke.agent.models import AgentContext
 from yoke.agent.loop.types import AfterToolCallHook
 from yoke.agent.loop.types import AgentEventHandler
@@ -144,8 +146,6 @@ def _run_attempts[StructuredT](
     attempts = 1 if output_type is None else STRUCTURED_OUTPUT_MAX_ATTEMPTS
     last_error: StructuredOutputError | None = None
     result: AgentResult[StructuredT] | None = None
-    next_prompt = prompt
-    next_user_message = user_message
     retry_instructions: list[Message] = []
 
     def autosave_tool_checkpoint(context: AgentContext) -> None:
@@ -164,8 +164,9 @@ def _run_attempts[StructuredT](
             )
             with retry_context:
                 runtime_result = agent._runtime.run(
-                    next_prompt,
-                    user_message=next_user_message,
+                    prompt if attempt == 0 else "",
+                    user_message=user_message if attempt == 0 else None,
+                    append_user_message=attempt == 0,
                     on_event=on_event,
                     stop_requested=stop_requested,
                     before_tool_call=before_tool_call,
@@ -185,8 +186,13 @@ def _run_attempts[StructuredT](
                 if agent._runtime._context is not None:
                     agent._runtime._context.instructions.append(retry_message)
                     retry_instructions.append(retry_message)
-                next_prompt = "Retry with corrected structured output."
-                next_user_message = Message.user(next_prompt)
+                    append_control_message(
+                        agent._runtime._context,
+                        Message.user("Retry with corrected structured output."),
+                        metadata={
+                            INTERNAL_EVENT_METADATA_KEY: "structured_output_retry"
+                        },
+                    )
         else:
             if last_error is not None:
                 raise last_error

@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 from pathlib import Path
 
+from yoke.agent.interruptions import is_interruption_notice
 from yoke.agent.models import ConversationEntry
 from yoke.agent.models import Message
 from yoke.agent.models import MessageImageURLContentPart
@@ -107,6 +108,14 @@ def _entry_label(entry: ConversationEntry) -> str | None:
 def project_entry(entry: ConversationEntry) -> ProjectedMessage:
     """Convert one conversation entry into a public tagged message."""
     message = entry.message
+    if entry.kind in {"control", "assistant"} and is_interruption_notice(message):
+        return ControlProjectedMessage(
+            id=entry.id,
+            time_created=entry.created_at,
+            kind="control",
+            control="interrupted",
+            text=None,
+        )
     if entry.kind == "user":
         return UserProjectedMessage(
             id=entry.id,

@@ -14,6 +14,11 @@ from yoke.agent.conversation import parse_memory_message
 from yoke.agent.models import Message, MessageContentPart, MessageTextContentPart
 
 
+USER_MESSAGE_TRUNCATION_SUFFIX = (
+    "\n\n[Earlier part of this user message was truncated during context compaction.]"
+)
+
+
 def build_compaction_summary_prompt(target_tokens: int) -> str:
     """Build the appended handoff instruction for one target size."""
     if target_tokens <= 0:
@@ -102,10 +107,7 @@ def truncate_message_to_token_budget(
     text_content = message.text_content()
     if not text_content:
         return None
-    suffix = (
-        "\n\n[Earlier part of this user message was truncated during context "
-        "compaction.]"
-    )
+    suffix = USER_MESSAGE_TRUNCATION_SUFFIX
     usable = max(0, char_budget - len(suffix))
     if usable <= 0:
         return None

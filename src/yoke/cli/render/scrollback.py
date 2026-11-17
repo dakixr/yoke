@@ -7,6 +7,7 @@ import json
 from rich.console import Console
 from rich.text import Text
 
+from yoke.agent.interruptions import is_interruption_notice
 from yoke.agent.models import Message
 from yoke.agent.conversation import parse_memory_message
 from yoke.cli.render.base import format_tool_error
@@ -111,6 +112,11 @@ def print_session_scrollback(console: Console, messages: list[Message]) -> None:
     pending_tool_response_divider = False
     in_tool_block = False
     for message in _visible_scrollback_messages(messages):
+        if is_interruption_notice(message):
+            console.print(Text("Interrupted", style="dim"))
+            pending_tool_response_divider = False
+            in_tool_block = False
+            continue
         if message.role == "user":
             print_scrollback_user(console, message.display_text_content() or "")
             pending_tool_response_divider = False

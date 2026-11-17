@@ -215,7 +215,7 @@ still runs when the current turn finishes, or on the next request that resumes.
 Pause an input if you want to hold it.
 
 `POST /session/{id}/interrupt` stops the running turn. The daemon saves the
-partial turn with an interrupted marker and settles the input with outcome
+partial turn with a `control` entry and settles the input with outcome
 `stopped`. Interrupting does not start the next queued input. Queued inputs
 wait until the next admission or queue edit with `resume: true`.
 
@@ -699,6 +699,11 @@ message, so the agent can open them with its file tools.
 Cursors are opaque. Keep the same query parameters while you follow one. A
 cursor whose anchor entry no longer exists, for example after a branch change,
 returns `400 invalid_cursor_anchor`. Start again from the first page.
+
+Interruption entries project as `type: "control"`, `kind: "control"`,
+`control: "interrupted"` and `text: null`. This also applies to exact legacy
+interruption notices stored as assistant entries. Clients show an `Interrupted`
+marker instead of an assistant reply. Stored legacy entries stay unchanged.
 
 `/context` is for inspection and is bounded. By default it returns the 100 most
 recent active entries within 500,000 characters, and reports `totalEntries`,

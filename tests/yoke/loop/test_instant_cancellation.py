@@ -279,7 +279,7 @@ def test_steering_starts_replacement_before_retired_turn_finishes(tmp_path, term
         retired_worker.join(5)
         expected = [
             "first",
-            "The previous turn was interrupted by the user before completion. Continue from the current state and follow the user's next instruction.",
+            "The previous response was interrupted by the user.",
             "second",
             "accepted result",
         ]
@@ -365,7 +365,7 @@ def test_checkpoint_survives_steer_or_stop_and_immediate_continue(
             "user",
             "assistant",
             "tool",
-            "assistant",
+            "system",
         ]
         assert (
             sum(
@@ -374,10 +374,8 @@ def test_checkpoint_survives_steer_or_stop_and_immediate_continue(
             )
             == 1
         )
-        assert (
-            replacement_messages[-1]
-            .text_content()
-            .startswith("The previous turn was interrupted")
+        assert replacement_messages[-1].text_content() == (
+            "The previous response was interrupted by the user."
         )
         import json
 
@@ -739,8 +737,12 @@ def test_interruption_closes_incomplete_tool_batch_before_continuation() -> None
         "tool",
         "tool",
         "user",
-        "assistant",
+        "system",
     ]
+    assert snapshot_entries[-1].kind == "control"
+    assert snapshot_messages[-1].text_content() == (
+        "The previous response was interrupted by the user."
+    )
     assert snapshot_messages[3].tool_call_id == "call-2"
     assert "cancelled" in (snapshot_messages[3].text_content() or "")
     assert snapshot_entries[3].metadata["recovered_incomplete_tool_call"] is True

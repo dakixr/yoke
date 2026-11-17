@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from pydantic import BaseModel, Field
 
+from yoke.agent.interruptions import project_interruptions
 from yoke.agent.models import AgentContext, Message
 from yoke.agent.skills.models import ActiveSkill, SkillSpec
 
@@ -29,7 +30,9 @@ def build_prompt_context(context: AgentContext) -> PromptContext:
         if context.available_skills
         else []
     )
-    recent_messages = list(context.messages[len(context.instructions) :])
+    recent_messages = project_interruptions(
+        context.messages[len(context.instructions) :]
+    )
     ordered_messages = [*memory_messages, *skill_messages, *recent_messages]
     return PromptContext(
         instructions=instructions,

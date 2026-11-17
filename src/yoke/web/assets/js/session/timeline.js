@@ -156,7 +156,8 @@ function ActivityIndicator({ startedAt, activity }) {
 
 function TimelineMessage({ sessionID, message, liveToolsByID, toolNames, toolResults, showAssistantMetadata = false, compactToolBatch = false }) {
   let body = null;
-  if (message.type === "user") body = html`<${UserMessage} message=${message} />`;
+  if (message.type === "control" && message.control === "interrupted") body = html`<div class="control-line"><span>Interrupted</span></div>`;
+  else if (message.type === "user") body = html`<${UserMessage} message=${message} />`;
   else if (message.type === "assistant") body = html`<${AssistantMessage} sessionID=${sessionID} message=${message} liveToolsByID=${liveToolsByID} toolResults=${toolResults} showMetadata=${showAssistantMetadata} compactToolBatch=${compactToolBatch} />`;
   else if (message.type === "tool" && !toolNames.has(message.callID)) body = html`<${ToolMessage} sessionID=${sessionID} message=${message} toolName=${toolNames.get(message.callID) || null} />`;
   else if (message.type !== "tool") body = html`<div class="control-line"><span>${message.control || "Control"}</span>${message.text ? html`<span>${message.text}</span>` : null}</div>`;

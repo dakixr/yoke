@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 
-from yoke.agent.loop import INTERRUPTED_TURN_NOTICE
+from yoke.agent.interruptions import INTERRUPTED_RESPONSE_NOTE
 from yoke.agent.models import ConversationEntry
 from yoke.agent.models import Message
 from yoke.agent.session_tree._tool_sequence import recovered_tool_result_entries
@@ -46,11 +46,11 @@ def interrupted_turn_snapshot(
         snapshot_messages.append(copied_user)
         snapshot_entries.append(user_entry)
         parent_id = user_entry.id
-    interruption = Message.assistant(INTERRUPTED_TURN_NOTICE)
+    interruption = Message.system(INTERRUPTED_RESPONSE_NOTE)
     snapshot_messages.append(interruption)
     snapshot_entries.append(
         ConversationEntry(
-            kind="assistant",
+            kind="control",
             message=interruption.model_copy(deep=True),
             parent_id=parent_id,
         )

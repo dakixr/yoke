@@ -124,6 +124,9 @@ def test_interactive_steer_request_bytes_match_frozen_checkpoint_projection(
         terminal.send("Continue from the accepted tool result.")
         try:
             terminal.wait_text("Model steered.")
+            # The UI notice precedes asynchronous admission. Hold the old
+            # response until the replacement actually reaches the provider.
+            eventually(lambda: len(tape.calls) == 3)
         finally:
             gate.release.set()
         terminal.wait_text("Recorded answer.")
@@ -142,6 +145,7 @@ def test_interactive_steer_request_bytes_match_frozen_checkpoint_projection(
     expected = json.loads((GOLDEN / "checkpoint_stop.in_process.json").read_bytes())[
         "calls"
     ]
-    assert encode(storage_projection(normalizer.normalize(tape.calls))) == encode(
-        storage_projection(expected)
-    )
+    actual = encode(storage_projection(normalizer.normalize(tape.calls)))
+    if actual != encode(storage_projection(expected)):
+        (tmp_path / "actual.json").write_bytes(actual)
+    assert actual == encode(storage_projection(expected))

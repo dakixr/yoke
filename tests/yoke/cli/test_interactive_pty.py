@@ -49,11 +49,13 @@ def test_interactive_pty_renders_banner_and_exits(terminal, tmp_path, monkeypatc
                 if not chunk:
                     return
                 rendered.extend(chunk)
-            # The banner can render before the application signals readiness;
-            # check on every tick, not only when new output arrives.
+            # pre_run happens before raw input attaches. Wait for the first
+            # render to enable bracketed paste so entering raw mode cannot
+            # flush our exit command. Check on every tick, not just output.
             if (
                 application_ready.is_set()
                 and __version__.encode() in rendered
+                and b"\x1b[?2004h" in rendered
                 and not sent
             ):
                 ready.set()

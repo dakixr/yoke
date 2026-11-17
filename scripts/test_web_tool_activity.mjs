@@ -203,6 +203,11 @@ test("chat preserves tool outcomes through live, saved, reloaded, and orphaned r
   };
   const nodes = (tree) => Array.isArray(tree) ? tree.flatMap(nodes) : tree && typeof tree === "object" ? [tree, ...nodes(tree.children)] : [];
   const content = (tree) => Array.isArray(tree) ? tree.map(content).join("") : tree && typeof tree === "object" ? content(tree.children) : tree == null || typeof tree === "boolean" ? "" : String(tree);
+  const interrupted = render(Timeline({ sessionID: "s", data: { messages: [
+    { id: "interrupted", type: "control", kind: "control", control: "interrupted", text: null },
+  ] } }));
+  assert.equal(content(interrupted).trim(), "Interrupted");
+  assert.equal(nodes(interrupted).filter((node) => node.props.class?.includes?.("turn--assistant")).length, 0);
   const cases = [
     ["read", { ok: false, error: "Permission denied" }, "failed"],
     ["mcp.read", { isError: true }, "failed"],

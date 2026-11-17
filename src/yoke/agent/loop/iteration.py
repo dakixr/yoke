@@ -6,6 +6,7 @@ import logging
 from itertools import count
 from typing import TYPE_CHECKING
 
+from yoke.agent.interruptions import INTERRUPTED_RESPONSE_NOTE
 from yoke.agent.loop.events import completed_result
 from yoke.agent.loop.requests import ModelRequests
 from yoke.agent.loop.tool_core import (
@@ -15,7 +16,6 @@ from yoke.agent.loop.tool_core import (
 )
 from yoke.agent.loop.tool_runner import execute_tool_calls
 from yoke.agent.loop.types import (
-    INTERRUPTED_TURN_NOTICE,
     AfterToolCallHook,
     AgentEventHandler,
     AgentResult,
@@ -274,7 +274,7 @@ class AgentRun:
         """Build the standard stopped result payload."""
         context = self.context
         self.runtime.context_manager.append_message(
-            context, Message.assistant(INTERRUPTED_TURN_NOTICE)
+            context, Message.system(INTERRUPTED_RESPONSE_NOTE)
         )
         return AgentResult(
             output="Stopped current turn.",
