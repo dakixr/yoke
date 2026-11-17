@@ -2118,6 +2118,16 @@
       "PermissionResolution": {
         "additionalProperties": false,
         "properties": {
+          "by": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ResolvedBy"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "message": {
             "anyOf": [
               {
@@ -2873,6 +2883,16 @@
             "title": "Answers",
             "type": "array"
           },
+          "by": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ResolvedBy"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "rejected": {
             "default": false,
             "title": "Rejected",
@@ -3244,6 +3264,16 @@
         ],
         "title": "RecentLocationsResponse",
         "type": "object"
+      },
+      "ResolvedBy": {
+        "description": "Who ended a request, so a client can tell a stop from a denial.",
+        "enum": [
+          "user",
+          "turn_stopped",
+          "session_closed"
+        ],
+        "title": "ResolvedBy",
+        "type": "string"
       },
       "ResolvedLocation": {
         "additionalProperties": false,

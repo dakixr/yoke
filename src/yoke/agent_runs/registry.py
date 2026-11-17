@@ -6,6 +6,7 @@ from collections.abc import Callable
 from contextlib import suppress
 from copy import deepcopy
 from datetime import UTC, datetime
+import logging
 import os
 import secrets
 import threading
@@ -22,10 +23,19 @@ from yoke.agent_runs.records import (
 from yoke.agent_runs.capabilities import delegate, retention_token
 from yoke.agent_runs.lifetime import Lifetime
 from yoke.agent_runs.notifications import Notifier
+from yoke.agent_runs.phases import (
+    TERMINAL as TERMINAL_PHASES,
+    RunEvent,
+    RunPhase,
+    is_terminal,
+    next_run_phase,
+    public_observation,
+)
 from yoke.agent_runs.server import Server
 from yoke.agent_runs.worker import Worker
 
-TERMINAL = {"completed", "failed", "cancelled", "interrupted"}
+TERMINAL = {phase.value for phase in TERMINAL_PHASES}
+LOGGER = logging.getLogger(__name__)
 
 
 class AgentRunRegistry:
@@ -264,12 +274,21 @@ class AgentRunRegistry:
         sequence = frame.get("sequence")
         if record.worker.pid != pid or type(sequence) is not int or sequence < 1:
             raise ValueError("Invalid run reporter")
-        if sequence <= record.sequence or record.snapshot["status"] != "running":
+        if sequence <= record.sequence or record.phase in TERMINAL_PHASES:
             return False
-        status = frame.get("status", "running")
-        if status not in TERMINAL | {"running"}:
+        value = frame.get("status", "running")
+        if not isinstance(value, str) or value not in TERMINAL | {"running"}:
             raise ValueError("Invalid run status")
-        updates: dict[str, object] = {"status": status, "observation": "live"}
+        status = value
+        event = RunEvent.HEARTBEAT if status == "running" else RunEvent(status)
+        previous = record.phase
+        record.phase = next_run_phase(previous, event)
+        if previous is RunPhase.LOST:
+            record.retired_at = None
+        updates: dict[str, object] = {
+            "status": status,
+            "observation": public_observation(record.phase, "live"),
+        }
         for key in ("lastToolName", "errorType"):
             if key in frame:
                 updates[key] = text(frame[key])
@@ -282,7 +301,7 @@ class AgentRunRegistry:
             record.snapshot.get(key) != value for key, value in updates.items()
         )
         record.snapshot.update(updates)
-        if status in TERMINAL:
+        if record.phase in TERMINAL_PHASES:
             self._finish(record)
         if changed:
             self._changed(record)
@@ -303,7 +322,7 @@ class AgentRunRegistry:
                 ):
                     self.revoke(token)
             for record in self._records.values():
-                if record.snapshot["status"] != "running":
+                if record.phase in TERMINAL_PHASES:
                     continue
                 age = self._clock() - record.seen
                 observation = (
@@ -314,12 +333,20 @@ class AgentRunRegistry:
                     else "live"
                 )
                 if record.worker.dead():
+                    record.phase = next_run_phase(record.phase, RunEvent.INTERRUPTED)
                     record.snapshot.update(status="interrupted", observation="lost")
                     self._finish(record)
                     self._changed(record)
                     changed = True
+                elif record.phase is RunPhase.LOST:
+                    continue
                 elif record.snapshot["observation"] != observation:
-                    record.snapshot["observation"] = observation
+                    if observation == "lost":
+                        record.phase = next_run_phase(record.phase, RunEvent.LOST)
+                        record.retired_at = self._clock()
+                    record.snapshot["observation"] = public_observation(
+                        record.phase, observation
+                    )
                     self._changed(record)
                     changed = True
             self._trim()
@@ -329,6 +356,7 @@ class AgentRunRegistry:
     def _finish(self, record: Record) -> None:
         record.snapshot["finishedAt"] = self._timestamp()
         record.terminal_at = self._clock()
+        record.retired_at = record.terminal_at
         record.worker.close()
 
     def _changed(self, record: Record) -> None:
@@ -337,9 +365,9 @@ class AgentRunRegistry:
 
     def _trim(self) -> None:
         completed = [
-            item for item in self._records.items() if item[1].terminal_at is not None
+            item for item in self._records.items() if item[1].retired_at is not None
         ]
-        completed.sort(key=lambda item: item[1].terminal_at or 0)
+        completed.sort(key=lambda item: item[1].retired_at or 0)
         for run_id, record in completed[: max(0, len(completed) - self._history_limit)]:
             self._records.pop(run_id)
             self._capabilities.pop(record.token, None)
@@ -373,9 +401,11 @@ class AgentRunRegistry:
             self._closed = True
             self._stop.set()
             for record in self._records.values():
-                if record.snapshot["status"] == "running":
+                if record.phase is not RunPhase.LOST and not is_terminal(record.phase):
                     # Registry shutdown is loss of observation, not proof of death.
+                    record.phase = next_run_phase(record.phase, RunEvent.LOST)
                     record.snapshot["observation"] = "lost"
+                    record.retired_at = self._clock()
                     self._changed(record)
                 record.worker.close()
             for token in tuple(self._capabilities):

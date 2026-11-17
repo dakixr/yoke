@@ -8,6 +8,7 @@ import math
 from typing import cast
 
 from yoke.agent_runs.lifetime import Lifetime
+from yoke.agent_runs.phases import RunPhase
 from yoke.agent_runs.worker import Worker
 
 
@@ -55,6 +56,8 @@ class Record:
     seen: float
     sequence: int = 0
     terminal_at: float | None = None
+    retired_at: float | None = None
+    phase: RunPhase = RunPhase.RUNNING
     metadata: dict[str, object] = field(default_factory=dict)
 
 

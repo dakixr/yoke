@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import codecs
+import logging
 import os
 import signal
 import subprocess
@@ -11,7 +12,6 @@ import time
 from collections.abc import Callable, Iterator
 from datetime import datetime
 from pathlib import Path
-from typing import Literal
 
 from yoke.agent.tools.command_process.coordination import acquired
 from yoke.agent.tools.command_process.input import write_all
@@ -23,6 +23,12 @@ from yoke.agent.tools.command_process.output import (
     RetainedProcessOutput,
     command_decoder,
 )
+from yoke.agent.tools.command_process.phase import (
+    ProcessEvent,
+    ProcessPhase,
+    next_process_phase,
+    process_status,
+)
 from yoke.agent.tools.command_process.types import (
     INTERRUPT,
     CancelRequested,
@@ -33,6 +39,7 @@ from yoke.agent.tools.command_process.types import (
 
 FINAL_DRAIN_SECONDS = 1.0
 READER_JOIN_RESERVE_SECONDS = 0.1
+LOGGER = logging.getLogger(__name__)
 
 
 class _ManagedCommandProcess:
@@ -79,9 +86,12 @@ class _ManagedCommandProcess:
         self._accepting_output = True
         self._tree_cleanup_complete = False
         self._local_cleanup_complete = False
+        self._phase = ProcessPhase.STARTING
         self.closed = False
 
     def start_readers(self) -> None:
+        if self._phase is ProcessPhase.STARTING:
+            self._enter(ProcessEvent.START)
         if self.master_fd is not None:
             self.open_readers = 1
             self._start_reader(lambda: os.read(self.master_fd or -1, 4096))
@@ -194,7 +204,7 @@ class _ManagedCommandProcess:
         started_at = time.monotonic()
         deadline = started_at + yield_time_ms / 1000
         with self.condition:
-            while not self.finished:
+            while not self._finished_locked():
                 if cancel_requested is not None and cancel_requested():
                     break
                 remaining = deadline - time.monotonic()
@@ -203,7 +213,7 @@ class _ManagedCommandProcess:
                 self.condition.wait(timeout=min(remaining, 0.05))
             output, original_output_bytes = self.output.consume()
             self.last_used_at = time.monotonic()
-            finished = self.finished
+            finished = self._finished_locked()
             exit_code = self.process.poll() if finished else None
         return CommandProcessResult(
             session_id=None if finished else self.session_id,
@@ -230,20 +240,24 @@ class _ManagedCommandProcess:
     def _snapshot_locked(
         self, *, include_output: bool = True
     ) -> CommandProcessSnapshot:
-        finished = self.finished
+        self._mark_finished_locked()
+        phase = self._effective_phase_locked()
+        exit_code = self.process.poll()
         return CommandProcessSnapshot(
             session_id=self.session_id,
             pid=self.process.pid,
             command=self.command,
             cwd=self.cwd,
             tty=self.tty,
-            status=self._status(finished),
+            status=process_status(phase, exit_code),
             started_at=self.started_at,
             elapsed_seconds=max(
                 0.0,
                 (self.finished_monotonic or time.monotonic()) - self.started_monotonic,
             ),
-            exit_code=self.process.poll() if finished else None,
+            exit_code=exit_code
+            if phase in {ProcessPhase.EXITED, ProcessPhase.CLEANUP_FAILED}
+            else None,
             output_tail=self.output.tail() if include_output else "",
             original_output_bytes=self.output.original_bytes,
             retained_output_bytes=self.output.retained_bytes,
@@ -259,14 +273,55 @@ class _ManagedCommandProcess:
         with self.condition:
             return self.output.page(after_seq=after_seq, limit=limit, exact=exact)
 
-    def _status(self, finished: bool) -> Literal["running", "exited", "failed"]:
-        if not finished:
-            return "running"
-        return "exited" if self.process.poll() == 0 else "failed"
+    @property
+    def phase(self) -> ProcessPhase:
+        """Return the owned lifecycle phase, not a value derived from poll()."""
+        with self.condition:
+            self._mark_finished_locked()
+            return self._phase
+
+    def _effective_phase_locked(self) -> ProcessPhase:
+        """Recognize a reaped child even before a reader records the exit."""
+        if self._phase in {ProcessPhase.EXITED, ProcessPhase.CLEANUP_FAILED}:
+            return self._phase
+        if (
+            self._phase is not ProcessPhase.EXITING
+            and self.process.poll() is not None
+            and self.open_readers == 0
+        ):
+            return ProcessPhase.EXITED
+        return self._phase
+
+    def _finished_locked(self) -> bool:
+        return self._effective_phase_locked() in {
+            ProcessPhase.EXITED,
+            ProcessPhase.CLEANUP_FAILED,
+        }
 
     @property
     def finished(self) -> bool:
-        return self.process.poll() is not None and self.open_readers == 0
+        with self.condition:
+            self._mark_finished_locked()
+            return self._finished_locked()
+
+    def _enter(self, event: ProcessEvent) -> ProcessPhase:
+        with self.condition:
+            return self._enter_locked(event)
+
+    def _enter_locked(self, event: ProcessEvent) -> ProcessPhase:
+        previous = self._phase
+        current = next_process_phase(previous, event)
+        if current is not previous:
+            LOGGER.debug(
+                "machine=command_process id=%s from=%s to=%s cause=%s",
+                self.session_id,
+                previous.value,
+                current.value,
+                event.value,
+            )
+            self._phase = current
+            self.condition.notify_all()
+        return current
 
     def write(
         self, chars: str, *, cancel_requested: CancelRequested | None = None
@@ -304,6 +359,12 @@ class _ManagedCommandProcess:
     def _shutdown(self) -> None:
         first_error: BaseException | None = None
         with self._lifecycle_lock:
+            with self.condition:
+                self._enter_locked(
+                    ProcessEvent.RETRY
+                    if self._phase is ProcessPhase.CLEANUP_FAILED
+                    else ProcessEvent.SHUTDOWN
+                )
             if not self._tree_cleanup_complete:
                 try:
                     terminate_owned_process_tree(
@@ -319,6 +380,12 @@ class _ManagedCommandProcess:
             except BaseException as exc:
                 if first_error is None:
                     first_error = exc
+            with self.condition:
+                self._enter_locked(
+                    ProcessEvent.CLEANUP_FAILED
+                    if first_error is not None
+                    else ProcessEvent.CLEANUP_COMPLETE
+                )
         if first_error is not None:
             raise first_error
 
@@ -386,3 +453,9 @@ class _ManagedCommandProcess:
             and self.open_readers == 0
         ):
             self.finished_monotonic = time.monotonic()
+        if (
+            self._phase in {ProcessPhase.STARTING, ProcessPhase.RUNNING}
+            and self.process.poll() is not None
+            and self.open_readers == 0
+        ):
+            self._enter_locked(ProcessEvent.EXIT)

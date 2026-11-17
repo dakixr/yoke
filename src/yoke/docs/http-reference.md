@@ -260,8 +260,8 @@ Live event types:
 | `session.notice`, `session.warning`, `session.error` | Agent diagnostics. |
 | `session.compaction.*`, `session.context.compacted` | Automatic compaction progress. |
 | `session.context.updated` | Context usage. |
-| `session.permission.requested`, `session.permission.resolved` | Permission requests. |
-| `session.question.requested`, `session.question.resolved` | Questions. |
+| `session.permission.requested`, `session.permission.resolved` | Permission requests. A resolution carries `by`: `user`, `turn_stopped` or `session_closed`. |
+| `session.question.requested`, `session.question.resolved` | Questions. A resolution carries `by`: `user`, `turn_stopped` or `session_closed`. |
 | `session.plan.updated` | `steps`, `explanation` from `update_plan`. |
 | `session.process.updated` | A managed process changed. |
 | `session.agent.updated` | An SDK agent run changed. |
@@ -379,7 +379,8 @@ exception messages.
 
 `observation` is independent of `status`. After a daemon restart, a run whose
 worker cannot be confirmed becomes `lost`. That does not mean the worker
-stopped. Reading runs never starts, stops or consumes anything.
+stopped. A lost run counts as finished for retention and ages out with the
+bounded run history. Reading runs never starts, stops or consumes anything.
 
 Errors: 404 `process_not_found`, 409 `process_not_running`,
 400 `empty_process_input`, 409 `process_input_failed`,
@@ -494,7 +495,7 @@ All codes in one place, by status.
 | 401 | `unauthorized` |
 | 403 | `attachment_session_mismatch`, `location_parent_unreadable`, `path_outside_location`, `path_unreadable` |
 | 404 | `daemon_mode_required`, `entry_not_found`, `location_not_found`, `location_parent_not_found`, `mcp_server_not_found`, `message_not_found`, `path_not_found`, `permission_not_found`, `process_not_found`, `queue_item_not_found`, `question_not_found`, `session_not_found`, `skill_not_found`, `tool_call_not_found`, `upload_not_found` |
-| 409 | `attachment_identity_conflict`, `client_not_attached`, `daemon_busy`, `input_identity_conflict`, `model_context_too_small`, `process_input_failed`, `process_not_running`, `queue_item_not_editable`, `queue_revision_conflict`, `session_busy`, `session_has_pending_work`, `session_identity_conflict`, `session_workspace_busy`, `session_workspace_conflict`, `session_workspace_unavailable`, `tree_revision_conflict`, `tree_root_navigation_unsupported` |
+| 409 | `already_resolved`, `attachment_identity_conflict`, `client_not_attached`, `daemon_busy`, `input_identity_conflict`, `model_context_too_small`, `process_input_failed`, `process_not_running`, `queue_item_not_editable`, `queue_revision_conflict`, `session_busy`, `session_has_pending_work`, `session_identity_conflict`, `session_workspace_busy`, `session_workspace_conflict`, `session_workspace_unavailable`, `tree_revision_conflict`, `tree_root_navigation_unsupported` |
 | 413 | `attachment_too_large`, `prompt_too_large` |
 | 422 | `validation_error` |
 | 502 | `title_regeneration_failed` |

@@ -302,7 +302,11 @@ class CommandProcessManager:
         return len(processes)
 
     def close(self) -> None:
-        """Terminate live processes and release retained process state."""
+        """Terminate live processes and release retained process state.
+
+        A failed cleanup keeps this manager and its agent-run authority open, so
+        a later close retries instead of orphaning a surviving process tree.
+        """
         with self._lock:
             self._closed = True
             listeners = tuple(self._listeners)
@@ -312,13 +316,14 @@ class CommandProcessManager:
             self.terminate_all()
         except BaseException as exc:
             first_error = exc
-        self.agent_runs.close()
-        with self._lock:
-            self._completed.clear()
-            self._completion_events.clear()
-            self._background_session_ids.clear()
-            self._notified_completion_ids.clear()
-            self._dropped_completion_events = 0
+        if first_error is None:
+            self.agent_runs.close()
+            with self._lock:
+                self._completed.clear()
+                self._completion_events.clear()
+                self._background_session_ids.clear()
+                self._notified_completion_ids.clear()
+                self._dropped_completion_events = 0
         for listener in listeners:
             with suppress(Exception):
                 listener()

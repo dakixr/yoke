@@ -2,11 +2,20 @@
 
 from __future__ import annotations
 
+from enum import StrEnum
 from typing import Literal
 
 from pydantic import Field
 
 from yoke.http.models.common import ApiModel
+
+
+class ResolvedBy(StrEnum):
+    """Who ended a request, so a client can tell a stop from a denial."""
+
+    USER = "user"
+    TURN_STOPPED = "turn_stopped"
+    SESSION_CLOSED = "session_closed"
 
 
 class PermissionRequestInfo(ApiModel):
@@ -31,6 +40,7 @@ class PermissionResolution(ApiModel):
     request_id: str
     reply: Literal["allow", "deny"]
     message: str | None = None
+    by: ResolvedBy | None = None
 
 
 class PermissionReplyResponse(ApiModel):
@@ -58,6 +68,7 @@ class QuestionResolution(ApiModel):
     request_id: str
     answers: list[str] = Field(default_factory=list)
     rejected: bool = False
+    by: ResolvedBy | None = None
 
 
 class QuestionReplyResponse(ApiModel):

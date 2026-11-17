@@ -130,3 +130,35 @@ def test_unicode_exception_name_does_not_discard_real_terminal_outcome(
         agent.close()
         service.close()
         registry.close()
+
+
+def test_lost_rows_are_retention_terminal_in_the_http_projection(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from yoke.http.services.agent_runs import service as agent_run_service
+
+    monkeypatch.setattr(agent_run_service, "RETAINED_FINISHED", 1)
+    rows: dict[str, dict[str, object]] = {
+        "lost": {
+            "runId": "lost",
+            "status": "running",
+            "observation": "lost",
+            "startedAt": "2026-01-01T00:00:00+00:00",
+        },
+        "done": {
+            "runId": "done",
+            "status": "completed",
+            "observation": "live",
+            "startedAt": "2026-01-02T00:00:00+00:00",
+        },
+        "live": {
+            "runId": "live",
+            "status": "running",
+            "observation": "live",
+            "startedAt": "2026-01-03T00:00:00+00:00",
+        },
+    }
+
+    agent_run_service.AgentRunService._trim(rows)
+
+    assert set(rows) == {"done", "live"}

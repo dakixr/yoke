@@ -179,6 +179,10 @@ decoded terminal text with carriage returns and final newlines kept as they
 were. Execution and input results return one item plus `reason`. `next_tool`
 is `process_read` while the process runs or has more output.
 
+A process whose tree cleanup failed reports `status: "failed"` and `running:
+false`, and the runtime retries cleanup on the next cancel or shutdown. Read
+its retained output as for any finished process.
+
 A cursor is a short versioned string such as `pc1_...`. Reads do not consume
 output and can be repeated while the history is retained. Advance with the
 returned `cursor` to get the next page. Reusing an old cursor repeats output.

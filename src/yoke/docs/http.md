@@ -681,9 +681,17 @@ POST /session/{id}/question/{requestID}/reject
 
 The daemon announces them with live `session.permission.requested` and
 `session.question.requested` events, and their resolutions with
-`session.permission.resolved` and `session.question.resolved`. Interrupting
-the turn denies its pending permission and rejects its pending question. After
-a reconnect, list the pending requests again. A daemon restart drops them.
+`session.permission.resolved` and `session.question.resolved`. Each resolution
+carries `by`: `user`, `turn_stopped` or `session_closed`. Interrupting the turn
+denies its pending permission and rejects its pending question with
+`by: "turn_stopped"`. After a reconnect, list the pending requests again. A
+daemon restart drops them.
+
+The first reply wins. A second reply to the same request returns
+`409 already_resolved`, with `phase` and the stored `resolution` in `details`,
+so two clients never race to answer. The daemon keeps the last 64 consumed
+requests as tombstones; after that a later reply returns
+`404 permission_not_found` or `404 question_not_found`.
 
 ## Change the model, compact and fork
 

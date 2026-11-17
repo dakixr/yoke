@@ -33,6 +33,11 @@ def _meaningful(info: dict[str, object]) -> dict[str, object]:
     }
 
 
+def _retired(info: dict[str, object]) -> bool:
+    """A lost observation is terminal for retention, not proof of success."""
+    return info["status"] != "running" or info["observation"] == "lost"
+
+
 class AgentRunService:
     """Use the existing journal writer, with no SDK-side durable writes."""
 
@@ -167,11 +172,7 @@ class AgentRunService:
     @staticmethod
     def _trim(rows: dict[str, dict[str, object]]) -> None:
         finished = sorted(
-            (
-                item
-                for item in rows.values()
-                if item["status"] != "running" or item["observation"] == "lost"
-            ),
+            (item for item in rows.values() if _retired(item)),
             key=lambda item: str(item["startedAt"]),
             reverse=True,
         )

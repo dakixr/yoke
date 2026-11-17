@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING
 
 from yoke.agent.loop.types import BeforeToolCallContext, BeforeToolCallResult
 from yoke.http.models.client_session import ClientSessionRequest
+from yoke.http.models.human_input import ResolvedBy
 from yoke.http.services.human_input_service import HumanInputService
 from yoke.http.services.event_broker import EventService
 
@@ -123,8 +124,8 @@ class ClientSession:
                 )
                 while True:
                     if cancelled():
-                        self.human_input.reply_permission(
-                            self.session_id, info.id, reply="deny"
+                        self.human_input.cancel_permission(
+                            self.session_id, info.id, by=ResolvedBy.TURN_STOPPED
                         )
                     try:
                         reply = self.human_input.wait_permission(info.id, 0.1)
@@ -154,7 +155,9 @@ class ClientSession:
         )
         while True:
             if cancelled():
-                self.human_input.reject_question(self.session_id, info.id)
+                self.human_input.cancel_question(
+                    self.session_id, info.id, by=ResolvedBy.TURN_STOPPED
+                )
             try:
                 reply = self.human_input.wait_question(info.id, 0.1)
                 return {
