@@ -33,6 +33,7 @@ from yoke.http.runtime.factory import http_session_usage_metric_context
 from yoke.http.runtime.persistence import TurnPersistence, run_blocking
 from yoke.http.runtime.resources import SessionRuntimeResources
 from yoke.http.runtime.status import RuntimeStatus
+from yoke.http.runtime.phase import Idle, OperationActive
 from yoke.http.runtime.title import SessionTitleAutomation
 from yoke.http.runtime.turns import (
     ReservedInput,
@@ -120,7 +121,7 @@ class SessionOperations:
             self.activity.require_idle()
             await run_blocking(self.storage_executor, require_runtime_workspace, self)
             operation = self._new_operation("selection")
-            self.activity.operation = operation
+            self.activity.enter(OperationActive(operation), cause="selection")
             task = asyncio.create_task(
                 self._run_selection(
                     operation,
@@ -130,7 +131,7 @@ class SessionOperations:
                 ),
                 name=f"yoke-http-selection-{self.session_id}",
             )
-            operation.task = task
+            self.activity.track_operation(operation, task)
         result = await task
         assert isinstance(result, ProviderSessionState)
         return result
@@ -141,22 +142,18 @@ class SessionOperations:
             self.activity.require_idle()
             await run_blocking(self.storage_executor, require_runtime_workspace, self)
             operation = self._new_operation("compaction")
-            self.activity.operation = operation
-            self.activity.state = "running"
-            self.activity.last_error = None
-            self.activity.activity = "Compacting"
             self.events.durable(
                 self.session_id,
                 "session.compaction.started",
                 {"operationID": operation.id, "reason": "manual"},
                 location=self.activity.event_location,
             )
-            self.activity.publish_activity(None)
+            self.activity.enter(OperationActive(operation), cause="compaction")
             task = asyncio.create_task(
                 self._run_compaction(operation),
                 name=f"yoke-http-compaction-{self.session_id}",
             )
-            operation.task = task
+            self.activity.track_operation(operation, task)
             return operation.id
 
     async def _run_selection(
@@ -167,23 +164,37 @@ class SessionOperations:
         model_id: str,
         reasoning_effort: str | None,
     ) -> ProviderSessionState:
-        await self.active_slots.acquire()
+        with self.activity.operating(operation):
+            async with self.active_slots:
+                state = await self._worker(
+                    self._select_sync, provider_name, model_id, reasoning_effort
+                )
+            await self._finish_operation_success(operation)
+            return state
+
+    async def _worker[T](self, function: Callable[..., T], *args: object) -> T:
+        """Retain the lane and capacity until a cancelled physical worker finishes."""
+        worker = asyncio.get_running_loop().run_in_executor(
+            self.executor, function, *args
+        )
         try:
-            loop = asyncio.get_running_loop()
-            state = await loop.run_in_executor(
-                self.executor,
-                self._select_sync,
-                provider_name,
-                model_id,
-                reasoning_effort,
-            )
-        except BaseException as exc:
-            await self._finish_operation_error(operation, exc)
+            return await asyncio.shield(worker)
+        except asyncio.CancelledError:
+            # A Python worker cannot be cancelled. Do not admit a new mutation
+            # against the same agent while it still compacts or switches models.
+            while not worker.done():
+                try:
+                    await asyncio.shield(worker)
+                except asyncio.CancelledError:
+                    continue
+                except Exception:  # noqa: BLE001
+                    LOGGER.exception(
+                        "Cancelled operation worker failed for %s", self.session_id
+                    )
+            # Retrieve a failed outcome even if it completed before the wait.
+            if not worker.cancelled():
+                worker.exception()
             raise
-        finally:
-            self.active_slots.release()
-        await self._finish_operation_success(operation)
-        return state
 
     @uses_workspace
     def _select_sync(
@@ -282,17 +293,23 @@ class SessionOperations:
         return state
 
     async def _run_compaction(self, operation: SessionOperation) -> object:
-        await self.active_slots.acquire()
         try:
-            loop = asyncio.get_running_loop()
-            payload = await loop.run_in_executor(self.executor, self._compact_sync)
-        except Exception as exc:  # accepted operations settle into runtime status
-            await self._finish_operation_error(operation, exc)
+            with self.activity.operating(operation):
+                async with self.active_slots:
+                    payload = await self._worker(self._compact_sync)
+                await self._finish_operation_success(operation)
+                return payload
+        except Exception:  # accepted operations settle into runtime status
+            async with self.gate:
+                if (
+                    self.activity.active is not None
+                    or self.activity.operation is not None
+                ):
+                    return {"compacted": False}
+                next_admission = await self.inputs.reserve_input()
+                if next_admission is not None:
+                    self.start(next_admission)
             return {"compacted": False}
-        finally:
-            self.active_slots.release()
-        await self._finish_operation_success(operation)
-        return payload
 
     @uses_workspace
     def _compact_sync(self) -> dict[str, object]:
@@ -340,37 +357,10 @@ class SessionOperations:
         async with self.gate:
             if self.activity.operation is not operation:
                 return
-            self.activity.operation = None
-            self.activity.last_error = None
-            self.activity.activity = None
+            self.activity.settle_to_idle()
             next_admission = await self.inputs.reserve_input()
             if next_admission is not None:
                 self.start(next_admission)
-            else:
-                self.activity.state = "error" if self.activity.last_error else "idle"
-                self.activity.publish_activity(None)
-
-    async def _finish_operation_error(
-        self,
-        operation: SessionOperation,
-        error: BaseException,
-    ) -> None:
-        async with self.gate:
-            if self.activity.operation is not operation:
-                return
-            self.activity.operation = None
-            self.activity.state = "error"
-            self.activity.last_error = str(error)
-            self.activity.activity = None
-            self.activity.best_effort_durable(
-                f"session.{operation.kind}.failed",
-                {"operationID": operation.id, "error": self.activity.last_error},
-            )
-            self.activity.best_effort_publish_activity(None)
-            if operation.kind == "compaction":
-                next_admission = await self.inputs.reserve_input()
-                if next_admission is not None:
-                    self.start(next_admission)
 
     def _new_operation(
         self,
@@ -565,9 +555,7 @@ class SessionOperations:
         self.automatic_title.cancel()
         await self.resources.reset_workspace(updated)
         self.activity.event_location = updated.root
-        self.activity.state = "idle"
-        self.activity.last_error = None
-        self.activity.activity = None
+        self.activity.enter(Idle(), cause="workspace_relocated")
         self.events.durable(
             self.session_id,
             "session.workspace.relocated",
@@ -578,7 +566,6 @@ class SessionOperations:
             },
             location=updated.root,
         )
-        self.activity.best_effort_publish_activity(None)
         return updated
 
     async def configure_client(

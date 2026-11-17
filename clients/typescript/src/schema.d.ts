@@ -1087,8 +1087,24 @@ export interface components {
         ActiveRuntimeInfo: {
             /** Activity */
             activity?: string | null;
+            /** Error */
+            error?: string | null;
+            /** Inputid */
+            inputID?: string | null;
             /** Lasterror */
             lastError?: string | null;
+            operation?: components["schemas"]["RuntimeOperationInfo"] | null;
+            /**
+             * Phase
+             * @default idle
+             * @enum {string}
+             */
+            phase: "idle" | "turn_active" | "retiring" | "operation_active";
+            /**
+             * Revision
+             * @default 0
+             */
+            revision: number;
             /** Startedat */
             startedAt?: string | null;
             /**
@@ -1633,6 +1649,8 @@ export interface components {
         InterruptData: {
             /** Interrupted */
             interrupted: boolean;
+            /** Reason */
+            reason?: "operation_not_interruptible" | null;
             /** Turnid */
             turnID?: number | null;
         };
@@ -2255,6 +2273,16 @@ export interface components {
             git?: components["schemas"]["GitLocationInfo"] | null;
             /** Name */
             name: string;
+        };
+        /** RuntimeOperationInfo */
+        RuntimeOperationInfo: {
+            /** Id */
+            id: string;
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "selection" | "compaction";
         };
         /** SessionActiveResponse */
         SessionActiveResponse: {

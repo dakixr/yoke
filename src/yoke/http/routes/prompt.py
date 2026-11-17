@@ -114,10 +114,13 @@ async def patch_queue(
 )
 async def interrupt_session(request: Request, session_id: str) -> InterruptResponse:
     _sessions(request).get_session(session_id)
-    interrupted, turn_id = await _registry(request).interrupt(session_id)
-    return InterruptResponse(
-        data=InterruptData(interrupted=interrupted, turn_id=turn_id)
+    runtime = _registry(request).get_if_loaded(session_id)
+    result = (
+        await runtime.interrupt_result()
+        if runtime is not None
+        else InterruptData(interrupted=False)
     )
+    return InterruptResponse(data=result)
 
 
 @router.post(

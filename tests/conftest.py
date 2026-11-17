@@ -34,6 +34,7 @@ def isolate_yoke_local_state(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     home = tmp_path / "home"
+    monkeypatch.setenv("YOKE_STATE_CHECKS", "1")
     monkeypatch.setenv("HOME", str(home))
     monkeypatch.setenv("USERPROFILE", str(home))
     # Ambient DB overrides would make unrelated tests share one database. Tests

@@ -11,6 +11,7 @@ from yoke.http.runtime.entry_persistence import (
 )
 from yoke.http.runtime.persistence import TurnPersistence, run_blocking
 from yoke.http.runtime.status import RuntimeStatus
+from yoke.http.runtime.phase import Idle
 from yoke.http.runtime.turns import ReservedInput
 from yoke.http.runtime.workspace import require_runtime_workspace
 from yoke.http.services.event_broker import EventService
@@ -115,7 +116,8 @@ class TurnAdmission:
             )
         except WorkspaceUnavailable as exc:
             if self.activity.active is None and self.activity.operation is None:
-                self.activity.state = "error"
-                self.activity.last_error = str(exc)
-                self.activity.best_effort_publish_activity(None)
+                self.activity.enter(
+                    Idle(str(exc), "workspace_unavailable"),
+                    cause="workspace_unavailable",
+                )
             return None

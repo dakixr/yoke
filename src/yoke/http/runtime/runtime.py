@@ -12,7 +12,7 @@ from time import monotonic
 
 from yoke.agent.observability import ToolTraceStore
 from yoke.agent.tools.command_process import CommandProcessManager
-from yoke.http.models.session import ActiveRuntimeInfo
+from yoke.http.models.session import ActiveRuntimeInfo, InterruptData
 from yoke.http.reads.cache import SessionReadCache
 from yoke.http.reads.message_index import SessionMessageIndex
 from yoke.http.runtime.admission import TurnAdmission
@@ -23,6 +23,7 @@ from yoke.http.runtime.operations import SessionOperations
 from yoke.http.runtime.persistence import TurnPersistence, run_blocking
 from yoke.http.runtime.resources import SessionRuntimeResources
 from yoke.http.runtime.status import RuntimeStatus
+from yoke.http.runtime.phase import Activity, Idle, TurnActive
 from yoke.http.runtime.title import SessionTitleAutomation
 from yoke.http.runtime.turns import (
     ReservedInput,
@@ -176,9 +177,10 @@ class SessionRuntime:
                 await self.run_blocking(require_runtime_workspace, self)
             except WorkspaceUnavailable as exc:
                 if self.activity.active is None and self.activity.operation is None:
-                    self.activity.state = "error"
-                    self.activity.last_error = str(exc)
-                    self.activity.best_effort_publish_activity(None)
+                    self.activity.enter(
+                        Idle(str(exc), "workspace_unavailable"),
+                        cause="workspace_unavailable",
+                    )
                 return
             await self.run_blocking(self._reopen_archived_locked)
             if self.activity.operation is not None:
@@ -218,12 +220,21 @@ class SessionRuntime:
 
     async def interrupt(self) -> tuple[bool, int | None]:
         """Retire the current generation without consuming queued work."""
+        result = await self.interrupt_result()
+        return result.interrupted, result.turn_id
+
+    async def interrupt_result(self) -> InterruptData:
+        """Report why an operation cannot be interrupted under the same gate."""
         async with self.gate:
+            if self.activity.operation is not None:
+                return InterruptData(
+                    interrupted=False, reason="operation_not_interruptible"
+                )
             if self.activity.active is None:
-                return False, None
+                return InterruptData(interrupted=False)
             turn_id = self.activity.active.turn_id
             await self.finalizer.retire(reason="user")
-            return True, turn_id
+            return InterruptData(interrupted=True, turn_id=turn_id)
 
     async def wait(self, timeout_seconds: float | None = None) -> ActiveRuntimeInfo:
         """Wait until the current logical generation settles."""
@@ -240,10 +251,15 @@ class SessionRuntime:
                         if self.activity.operation is not None
                         else None
                     )
+                    self.activity.changed.clear()
                 if task is None:
-                    await asyncio.sleep(0)
+                    await self.activity.changed.wait()
                 else:
-                    await asyncio.shield(task)
+                    try:
+                        await asyncio.shield(task)
+                    except asyncio.CancelledError:
+                        if not task.cancelled():
+                            raise
 
         if timeout_seconds is None:
             await wait_idle()
@@ -254,21 +270,7 @@ class SessionRuntime:
     async def status(self) -> ActiveRuntimeInfo:
         """Return process-local activity without loading durable session metadata."""
         async with self.gate:
-            active = self.activity.active
-            operation = self.activity.operation
-            return ActiveRuntimeInfo(
-                state=self.activity.state,
-                turn_id=active.turn_id if active is not None else None,
-                started_at=(
-                    active.started_at
-                    if active is not None
-                    else operation.started_at
-                    if operation is not None
-                    else None
-                ),
-                activity=self.activity.activity,
-                last_error=self.activity.last_error,
-            )
+            return self.activity.snapshot()
 
     async def close(self) -> None:
         """Stop current work and release the primary runtime."""
@@ -331,9 +333,9 @@ class SessionRuntime:
                 execution = self.launch_execution(reserved.admission)
                 execution.workspace_use = reserved.workspace_use.pop_all()
             except BaseException as exc:
-                self.activity.active = None
-                self.activity.state = "error"
-                self.activity.last_error = str(exc)
+                self.activity.enter(
+                    Idle(str(exc), "start_failed"), cause="start_failed"
+                )
                 raise
 
     def launch_execution(self, admission: AdmissionRecord) -> TurnExecution:
@@ -357,18 +359,18 @@ class SessionRuntime:
             automatic_title=automatic_title,
             client=self.resources.configuration.clients.for_input(admission.id),
         )
-        self.activity.active = execution
-        self.activity.state = "running"
-        self.activity.last_error = None
-        self.activity.activity = (
-            "Waiting for a slot"
-            if self.active_slots.locked()
-            else "Loading session"
-            if cold_start
-            else "Thinking"
-        )
         self.activity.tool_call_ids = {execution.turn_id: set()}
-        self.activity.publish_activity(execution)
+        self.activity.enter(
+            TurnActive(
+                execution,
+                Activity.WAITING_SLOT
+                if self.active_slots.locked()
+                else Activity.LOADING
+                if cold_start
+                else Activity.THINKING,
+            ),
+            cause="start",
+        )
         self.execution.launch(execution)
         return execution
 

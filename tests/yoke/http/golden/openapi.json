@@ -15,6 +15,28 @@
             ],
             "title": "Activity"
           },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          },
+          "inputID": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Inputid"
+          },
           "lastError": {
             "anyOf": [
               {
@@ -25,6 +47,32 @@
               }
             ],
             "title": "Lasterror"
+          },
+          "operation": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RuntimeOperationInfo"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "phase": {
+            "default": "idle",
+            "enum": [
+              "idle",
+              "turn_active",
+              "retiring",
+              "operation_active"
+            ],
+            "title": "Phase",
+            "type": "string"
+          },
+          "revision": {
+            "default": 0,
+            "title": "Revision",
+            "type": "integer"
           },
           "startedAt": {
             "anyOf": [
@@ -1476,6 +1524,18 @@
           "interrupted": {
             "title": "Interrupted",
             "type": "boolean"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "const": "operation_not_interruptible",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
           },
           "turnID": {
             "anyOf": [
@@ -3272,6 +3332,29 @@
           "name"
         ],
         "title": "ResolvedLocation",
+        "type": "object"
+      },
+      "RuntimeOperationInfo": {
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "kind": {
+            "enum": [
+              "selection",
+              "compaction"
+            ],
+            "title": "Kind",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "kind"
+        ],
+        "title": "RuntimeOperationInfo",
         "type": "object"
       },
       "SessionActiveResponse": {
