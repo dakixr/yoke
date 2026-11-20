@@ -12,6 +12,7 @@ from acp import schema as s
 from yoke._version import __version__
 from yoke.daemon.protocol import require_capabilities
 from yoke.daemon.client import DaemonIncompatible
+from yoke.acp import model_state as ms
 from yoke.acp.catalog import discover
 from yoke.acp.native import NativeClient
 from yoke.acp.native import fail
@@ -211,7 +212,7 @@ class YokeAcpAgent:
         additional_directories: list[str] | None = None,
         mcp_servers: list[AcpMcpServer] | None = None,
         **_kwargs: Any,
-    ) -> s.NewSessionResponse:
+    ) -> ms.NewSessionResponse:
         return await self.lifecycle.new(cwd, mcp_servers, additional_directories)
 
     async def load_session(
@@ -221,8 +222,8 @@ class YokeAcpAgent:
         mcp_servers: list[AcpMcpServer] | None = None,
         additional_directories: list[str] | None = None,
         **_kwargs: Any,
-    ) -> s.LoadSessionResponse:
-        return s.LoadSessionResponse.model_validate(
+    ) -> ms.LoadSessionResponse:
+        return ms.LoadSessionResponse.model_validate(
             await self.lifecycle.restore(
                 session_id, cwd, mcp_servers, additional_directories, replay=True
             )
@@ -235,8 +236,8 @@ class YokeAcpAgent:
         additional_directories: list[str] | None = None,
         mcp_servers: list[AcpMcpServer] | None = None,
         **_kwargs: Any,
-    ) -> s.ResumeSessionResponse:
-        return s.ResumeSessionResponse.model_validate(
+    ) -> ms.ResumeSessionResponse:
+        return ms.ResumeSessionResponse.model_validate(
             await self.lifecycle.restore(
                 session_id, cwd, mcp_servers, additional_directories, replay=False
             )
@@ -254,7 +255,7 @@ class YokeAcpAgent:
         additional_directories: list[str] | None = None,
         mcp_servers: list[AcpMcpServer] | None = None,
         **_kwargs: Any,
-    ) -> s.ForkSessionResponse:
+    ) -> ms.ForkSessionResponse:
         return await self.lifecycle.fork(
             session_id, cwd, mcp_servers, additional_directories
         )

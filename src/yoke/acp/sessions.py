@@ -9,6 +9,7 @@ from uuid import uuid4
 from acp import RequestError
 from acp import schema as s
 
+from yoke.acp import model_state as ms
 from yoke.acp.native import fail
 from yoke.acp.prompting import replay_history
 
@@ -112,7 +113,7 @@ class SessionLifecycle:
         cwd: str,
         mcp_servers: list[Any] | None,
         additional_directories: list[str] | None,
-    ) -> s.NewSessionResponse:
+    ) -> ms.NewSessionResponse:
         agent = self.agent
         cwd = self.scope(cwd, additional_directories)
         self.servers(mcp_servers)
@@ -134,7 +135,7 @@ class SessionLifecycle:
         self.configs[session_id] = config
         agent.remember(session_id, data, catalog, default)
         await self.activate(session_id)
-        return s.NewSessionResponse.model_validate(
+        return ms.NewSessionResponse.model_validate(
             {"sessionId": session_id, **self.state(session_id)}
         )
 
@@ -171,7 +172,13 @@ class SessionLifecycle:
             return self.state(session_id)
 
     def state(self, session_id: str) -> dict[str, Any]:
-        result: dict[str, Any] = {"configOptions": self.agent.options(session_id)}
+        agent = self.agent
+        result: dict[str, Any] = {
+            "configOptions": agent.options(session_id),
+            "models": ms.model_state(
+                agent.catalogs[session_id], agent.sessions[session_id]
+            ),
+        }
         result["modes"] = {
             "currentModeId": self.configs.get(session_id, {}).get(
                 "mode", "full-access"
@@ -224,7 +231,7 @@ class SessionLifecycle:
         cwd: str,
         mcp_servers: list[Any] | None,
         additional_directories: list[str] | None,
-    ) -> s.ForkSessionResponse:
+    ) -> ms.ForkSessionResponse:
         agent = self.agent
         cwd = self.scope(cwd, additional_directories)
         self.servers(mcp_servers)
@@ -241,7 +248,7 @@ class SessionLifecycle:
         await self.configure(new_id, cwd, mcp_servers, additional_directories)
         agent.remember(new_id, data, catalog, default)
         await self.activate(new_id)
-        return s.ForkSessionResponse.model_validate(
+        return ms.ForkSessionResponse.model_validate(
             {"sessionId": new_id, **self.state(new_id)}
         )
 

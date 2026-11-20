@@ -64,6 +64,13 @@ from different providers stay distinct. New sessions use the directory's
 configured default model and reasoning effort. Switching models resets the
 effort to the new model's default.
 
+ACP configuration options describe only the session's current model. Session
+responses therefore also carry the unstable `models` state, listing every model
+with its effort choices and default in `_meta.reasoningEfforts` and
+`_meta.reasoningEffort`, or `_meta.supportsReasoningEffort: false`. T3 Code
+reads it to offer an effort selector for every model, not only the one its
+probe session started with.
+
 If a model is missing, compare `GET /api/v1/provider` and `GET /api/v1/model`
 on the daemon with `yoke models list`. The daemon, not the launcher, needs the
 credentials.

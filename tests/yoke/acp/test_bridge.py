@@ -292,6 +292,44 @@ class BridgeTests(unittest.IsolatedAsyncioTestCase):
         assert self.native.session_create is not None
         self.assertNotIn("title", self.native.session_create)
 
+    async def test_session_state_advertises_every_models_reasoning_efforts(
+        self,
+    ) -> None:
+        def wire(response: Any) -> dict[str, Any]:
+            # Mirror the ACP connection's result serialization.
+            return response.model_dump(
+                mode="json", by_alias=True, exclude_none=True, exclude_unset=True
+            )
+
+        expected = {
+            "currentModelId": "fixture:model",
+            "availableModels": [
+                {
+                    "modelId": "fixture:model",
+                    "name": "Fixture model",
+                    "_meta": {
+                        "reasoningEfforts": [
+                            {"value": "low", "label": "low"},
+                            {"value": "high", "label": "high"},
+                        ],
+                        "reasoningEffort": "high",
+                    },
+                },
+                {
+                    "modelId": "fixture:other",
+                    "name": "Other model",
+                    "_meta": {
+                        "reasoningEfforts": [{"value": "low", "label": "low"}],
+                        "reasoningEffort": "low",
+                    },
+                },
+            ],
+        }
+        created = wire(await self.agent.new_session(os.getcwd()))
+        self.assertEqual(created["models"], expected)
+        resumed = wire(await self.agent.resume_session("native-id", os.getcwd()))
+        self.assertEqual(resumed["models"], expected)
+
     async def test_prompt_emits_tool_lifecycle_and_final_text(self) -> None:
         result = await self.agent.prompt(
             "native-id",
