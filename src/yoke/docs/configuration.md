@@ -54,6 +54,7 @@ root adds more variables. Shell values win over `.env` values.
 | `codex:gpt-6-luna` | 400,000 | `none` `low` `medium` `high` `xhigh` `max` | `medium` |
 | `opencode-go:deepseek-v4.1-flash` | 400,000 | `low` `high` `max` | `high` |
 | `opencode-go:muse-spark-1.3-contributor` | 400,000 | `minimal` `low` `medium` `high` `xhigh` | `high` |
+| `zai:glm-5.4` | 400,000 | `low` `high` `max` | `max` |
 | `zai:glm-5.3-flash` | 400,000 | `low` `high` `max` | `max` |
 
 Every listed model accepts images. A provider selection without a model uses

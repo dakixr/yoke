@@ -85,6 +85,34 @@ def test_zai_provider_sends_thinking_object_for_selected_effort() -> None:
     }
 
 
+def test_zai_glm_54_sends_selected_reasoning_effort() -> None:
+    captured: dict[str, dict[str, object]] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["payload"] = json.loads(request.content.decode("utf-8"))
+        return _sse_response(content="done")
+
+    provider = ZAIProvider(
+        ZAIConfig(api_key="test", model="glm-5.4", reasoning_effort="high"),
+        http_client=httpx.Client(transport=httpx.MockTransport(handler)),
+    )
+
+    try:
+        model_info = next(m for m in provider.list_models() if m.id == "glm-5.4")
+        assert model_info.supports_image_inputs is True
+        provider.complete([Message.user("hello")], [])
+    finally:
+        provider.close()
+
+    assert captured["payload"] == {
+        "model": "glm-5.4",
+        "messages": [{"role": "user", "content": "hello"}],
+        "stream": True,
+        "thinking": {"type": "enabled", "clear_thinking": True},
+        "reasoning_effort": "high",
+    }
+
+
 def test_zai_glm_flash_sends_selected_reasoning_effort() -> None:
     captured: dict[str, dict[str, object]] = {}
 
