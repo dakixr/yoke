@@ -39,7 +39,7 @@ def test_provider_readiness_uses_explicit_env(tmp_path: Path) -> None:
     assert ready.ready is True
     assert ready.model == "glm-5.3-flash"
     assert ready.reasoning_effort == "max"
-    assert [model.id for model in ready.models] == ["glm-5.3-flash"]
+    assert [model.id for model in ready.models] == ["glm-5.4", "glm-5.3-flash"]
 
 
 def test_provider_readiness_uses_credentials_saved_by_login(
