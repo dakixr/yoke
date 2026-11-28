@@ -38,6 +38,7 @@ class McpServerConfig:
     headers: dict[str, str] | None = None
     verify: bool = True
     source_path: Path | None = None
+    description: str | None = None
 
 
 @dataclass(slots=True, frozen=True)
@@ -183,6 +184,7 @@ def _parse_server(
         )
     value = cast(dict[str, object], value)
     server_name = name.strip()
+    description = _string(value.get("description"), default=None)
     transport = _string(value.get("transport"), default=None)
     if transport is None:
         transport = "streamable-http" if value.get("url") is not None else "stdio"
@@ -191,6 +193,7 @@ def _parse_server(
     if transport not in SUPPORTED_TRANSPORTS:
         return McpServerConfig(
             name=server_name,
+            description=description,
             transport=transport,
             enabled=_bool(value.get("enabled"), default=True),
             command=command,
@@ -218,6 +221,7 @@ def _parse_server(
         )
     return McpServerConfig(
         name=server_name,
+        description=description,
         transport=transport,
         enabled=_bool(value.get("enabled"), default=True),
         command=command,

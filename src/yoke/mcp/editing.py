@@ -183,6 +183,8 @@ def _server_config_to_json(server: McpServerConfig) -> dict[str, Any]:
         "transport": server.transport,
         "enabled": server.enabled,
     }
+    if server.description is not None:
+        entry["description"] = server.description
     if server.command is not None:
         entry["command"] = server.command
     if server.args:

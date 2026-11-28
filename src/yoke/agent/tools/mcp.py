@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+from collections.abc import Sequence
 
 from pathlib import Path
 from threading import Lock
@@ -15,18 +16,18 @@ from typing import cast
 
 from pydantic import Field
 
+from yoke.agent.models import Message
 from yoke.agent.tools.base import LocalTool
 
 if TYPE_CHECKING:
     from collections.abc import Callable
 
+    from yoke.mcp.config import McpServerConfig
     from yoke.mcp.config import McpSessionPolicy
 
 
 class McpToolManager(Protocol):
     """Minimal manager contract used by the model-facing MCP tools."""
-
-    def has_servers(self) -> bool: ...
 
     def inspect(
         self,
@@ -66,8 +67,8 @@ class LazyMcpManager:
         self._manager_lock = Lock()
         self._inner: McpToolManager | None = None
 
-    def has_servers(self) -> bool:
-        """Check enabled-server presence using only the lightweight config module."""
+    def enabled_servers(self) -> tuple[McpServerConfig, ...]:
+        """Read effective server config without initializing the MCP client."""
         from yoke.mcp.config import load_mcp_config
 
         config = load_mcp_config(
@@ -75,7 +76,7 @@ class LazyMcpManager:
             home=self.home,
             session_policy=self.session_policy,
         )
-        return bool(config.enabled_servers)
+        return config.enabled_servers
 
     def inspect(
         self,
@@ -155,6 +156,11 @@ class McpInspectTool(LocalTool):
         description="Include compact input schemas for matching tools.",
     )
 
+    def catalog_instruction(self) -> Message | None:
+        """Return the catalog captured when this tool was registered."""
+        message = self.binding_value("mcp_catalog_instruction")
+        return message if isinstance(message, Message) else None
+
     def execute(self) -> dict[str, object]:
         """Return compact MCP server/tool metadata."""
         return self._manager().inspect(
@@ -211,11 +217,36 @@ class McpCallTool(LocalTool):
         return (self._manager(),)
 
 
-def register_mcp_tools(manager: McpToolManager) -> tuple[LocalTool, ...]:
+def _render_available_mcp_servers_message(
+    servers: Sequence[McpServerConfig],
+) -> Message:
+    """Render a compact system message listing enabled MCP servers."""
+    lines = [
+        "Available MCP servers:",
+        "If a server matches the task or the user asks to use MCP, call `mcp_inspect` before choosing a tool. Pass the matching `server` name when known.",
+    ]
+    for server in servers:
+        description = (
+            " ".join(server.description.split())
+            if server.description is not None
+            else ""
+        )
+        if description:
+            lines.append(f"- {server.name}: {description}")
+        else:
+            lines.append(f"- {server.name}")
+    return Message.system("\n".join(lines))
+
+
+def register_mcp_tools(manager: LazyMcpManager) -> tuple[LocalTool, ...]:
     """Return the compact MCP tools when at least one server is configured."""
-    if not manager.has_servers():
+    servers = manager.enabled_servers()
+    if not servers:
         return ()
     return (
-        McpInspectTool.bind(mcp_manager=manager),
+        McpInspectTool.bind(
+            mcp_manager=manager,
+            mcp_catalog_instruction=_render_available_mcp_servers_message(servers),
+        ),
         McpCallTool.bind(mcp_manager=manager),
     )

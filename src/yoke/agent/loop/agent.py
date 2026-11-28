@@ -135,6 +135,7 @@ class RuntimeAgent:
                     [copy_tool_for_runtime(tool) for tool in tools],
                     model=resolve_model_identity(self.provider),
                 )
+                self._install_tool_system_messages([])
             if messages is not None or conversation_entries is not None:
                 self.load_conversation(
                     messages=messages,
@@ -474,9 +475,19 @@ class RuntimeAgent:
 
     def _install_tool_system_messages(self, messages: Sequence[Message]) -> None:
         """Install tool registration system messages into live context."""
+        from yoke.agent.tools.mcp import McpInspectTool
+
+        inspect_tool = self.tools.get(McpInspectTool.name)
+        catalog = (
+            inspect_tool.catalog_instruction()
+            if isinstance(inspect_tool, McpInspectTool)
+            else None
+        )
         self._tool_system_messages = [
             message.model_copy(deep=True) for message in messages
         ]
+        if catalog is not None:
+            self._tool_system_messages.append(catalog.model_copy(deep=True))
         instructions = [
             *(message.model_copy(deep=True) for message in self._base_instructions),
             *(message.model_copy(deep=True) for message in self._tool_system_messages),

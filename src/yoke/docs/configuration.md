@@ -359,6 +359,7 @@ by default, so run `yoke tools activate mcp` first.
 
 | Field | Default | Meaning |
 | --- | --- | --- |
+| `description` | | Optional short description shown in the `Available MCP servers:` system prompt. |
 | `command`, `args`, `cwd` | | Start a stdio server. |
 | `url` | | Connect to a Streamable HTTP server. Setting `url` selects HTTP. |
 | `headers` | | HTTP headers. |
@@ -378,11 +379,16 @@ proxy and CA certificate variables, and Windows system paths. Add other names to
 `env_vars`, or set values in `env`. Values in `env` win.
 
 The agent sees two tools, `mcp_inspect` and `mcp_call`, instead of every remote
-tool, so large catalogs do not fill the context. Yoke rereads the config files
-before each call. It reuses a client whose config is unchanged, and closes a
-changed or removed server's client after its current call finishes. If a config
-file becomes invalid, Yoke reports the error and keeps using the last valid
-config.
+tool, so large catalogs do not fill the context. When `mcp_inspect` is active
+and at least one server is enabled, Yoke adds a compact `Available MCP servers:`
+system message listing the enabled effective server names and any configured
+`description` without connecting to servers or loading schemas, and instructs
+the model to call server-scoped `mcp_inspect` when a server matches the task or
+when the user asks to use MCP. If `mcp_inspect` is filtered out, Yoke omits the
+catalog. Yoke rereads the config files before each call. It reuses a client
+whose config is unchanged, and closes a changed or removed server's client after
+its current call finishes. If a config file becomes invalid, Yoke reports the
+error and keeps using the last valid config.
 
 `yoke mcp` lists servers and their tools. In a session, `/mcp` turns servers and
 tools on or off for the session, the workspace or globally. Session-only
